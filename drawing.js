@@ -374,20 +374,55 @@ class NeonDrawingBoard {
     if (btnSaveImage) {
       btnSaveImage.addEventListener('click', (e) => {
         e.preventDefault();
-        // Create a temporary canvas to fill background
+        
+        let minX = 0, minY = 0, maxX = this.canvas.width, maxY = this.canvas.height;
+        let hasStrokes = false;
+        
+        this.strokes.forEach(s => {
+          if (s.isBg) return;
+          s.points.forEach(p => {
+            if (!hasStrokes) { minX = maxX = p.x; minY = maxY = p.y; hasStrokes = true; }
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+          });
+        });
+        
+        minX -= 50; minY -= 50; maxX += 50; maxY += 50;
+        if (maxX - minX < this.canvas.width) { minX = 0; maxX = this.canvas.width; }
+        if (maxY - minY < this.canvas.height) { minY = 0; maxY = Math.max(this.canvas.height, maxY); }
+        
+        const targetWidth = maxX - minX;
+        const targetHeight = maxY - minY;
+        
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = this.canvas.width;
-        tempCanvas.height = this.canvas.height;
+        tempCanvas.width = targetWidth;
+        tempCanvas.height = targetHeight;
         const tempCtx = tempCanvas.getContext('2d');
         
-        // Fill background with card-bg color
         tempCtx.fillStyle = this.bgColor;
-        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        tempCtx.fillRect(0, 0, targetWidth, targetHeight);
         
-        // Draw the drawing canvas over it
-        tempCtx.drawImage(this.canvas, 0, 0);
+        this.strokes.forEach(stroke => {
+          if (stroke.isBg) return;
+          tempCtx.beginPath();
+          tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
+          tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
+          
+          if (stroke.tool === 'highlighter') {
+            tempCtx.globalCompositeOperation = 'multiply';
+          }
+          
+          stroke.points.forEach((pt, j) => {
+            const adjX = pt.x - minX;
+            const adjY = pt.y - minY;
+            if (j===0) tempCtx.moveTo(adjX, adjY); else tempCtx.lineTo(adjX, adjY);
+          });
+          tempCtx.stroke();
+          tempCtx.globalCompositeOperation = 'source-over';
+        });
         
-        // Export and download
         const dataUrl = tempCanvas.toDataURL('image/png');
         const now = new Date();
         const dateStr = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0');
@@ -695,12 +730,11 @@ class NeonDrawingBoard {
     // Auto-expand canvas height if drawing near the bottom
     const containerHeight = this.canvasContainer.clientHeight;
     const physicalY = pos.y * this.viewScale + this.panY;
-    if (physicalY > containerHeight - 50) {
-      this.canvasContainer.style.minHeight = `${containerHeight + 300}px`;
-      // Auto-scroll down if inside scrollable modal
-      if (this.wrapper && this.wrapper.scrollHeight > this.wrapper.clientHeight) {
-        this.wrapper.scrollTop += 20;
-      }
+    if (pos.y > containerHeight - 80) {
+      // Auto-pan down (moves the canvas up)
+      this.panY -= 15 / this.viewScale;
+      // Also update the canvas minHeight to allow native scrollbars to grow if desired
+      this.canvasContainer.style.minHeight = `${Math.max(this.canvasContainer.clientHeight, (physicalY + 300))}px`;
     }
 
     const activeTool = this.isTempEraser ? 'eraser' : this.currentTool;
@@ -746,7 +780,7 @@ class NeonDrawingBoard {
     const activeTool = this.isTempEraser ? 'eraser' : this.currentTool;
 
     if (activeTool === 'pen' || activeTool === 'highlighter') {
-      if (this.currentStroke && this.currentStroke.points.length > 1) {
+      if (this.currentStroke && this.currentStroke.points.length > 0) {
         this.strokes.push(this.currentStroke);
         this.saveState();
       }
