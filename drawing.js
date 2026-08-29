@@ -389,17 +389,41 @@ class NeonDrawingBoard {
         
         // Export and download
         const dataUrl = tempCanvas.toDataURL('image/png');
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        
-        // Format YYYYMMDD_HHMM
         const now = new Date();
         const dateStr = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0');
+        const filename = `planeer_drawing_${dateStr}.png`;
+
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         
-        a.download = `planeer_drawing_${dateStr}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        if (isMobile) {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.9); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px;';
+          
+          const title = document.createElement('div');
+          title.innerHTML = '이미지를 길게 눌러서 <strong>[사진 앱에 저장]</strong>을 선택하세요.';
+          title.style.cssText = 'color:white; margin-bottom:20px; text-align:center; font-size:1rem; line-height:1.5; background:rgba(255,255,255,0.1); padding:12px; border-radius:8px;';
+          
+          const img = document.createElement('img');
+          img.src = dataUrl;
+          img.style.cssText = 'max-width:100%; max-height:70vh; object-fit:contain; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+          
+          const closeBtn = document.createElement('button');
+          closeBtn.innerText = '닫기';
+          closeBtn.style.cssText = 'margin-top:20px; padding:12px 32px; font-size:1.1rem; border-radius:24px; background:#ef4444; color:white; border:none; font-weight:bold; cursor:pointer;';
+          closeBtn.onclick = () => document.body.removeChild(overlay);
+          
+          overlay.appendChild(title);
+          overlay.appendChild(img);
+          overlay.appendChild(closeBtn);
+          document.body.appendChild(overlay);
+        } else {
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
       });
     }
 

@@ -15,7 +15,7 @@
 .neon-drawing-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: center; justify-content: center;
   justify-content: space-between;
   padding: 8px;
   background-color: rgba(30, 30, 30, 0.95); /* Dark background with opacity for visibility */
@@ -161,9 +161,9 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 10100;
   display: flex;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
+  flex-wrap: wrap;
+  overflow-x: visible;
+  overflow-y: visible;
   align-items: center;
   gap: 4px;
   -ms-overflow-style: none;

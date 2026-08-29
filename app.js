@@ -4391,6 +4391,12 @@ function openTodoEditModal(todoId) {
     // Remove existing event listeners by replacing the node (to prevent duplicates)
     const newBtn = todoDictateBtn.cloneNode(true);
     todoDictateBtn.parentNode.replaceChild(newBtn, todoDictateBtn);
+    handleVideoRecordClick(
+      'btn-video-todo-modal',
+      todoEditDraftImages,
+      'todo-edit-modal-previews',
+      () => renderTodoEditPreviews()
+    );
     handleAudioDictateClick(
       'btn-dictate-todo-modal', 
       'todo-edit-modal-memo', 
@@ -8462,6 +8468,7 @@ const AudioRecorder = {
   speechRecognition: null,
   isRecording: false,
   finalTranscript: '',
+  lastInterim: '',
   onStop: null,
   onProgress: null,
   
@@ -8481,6 +8488,8 @@ const AudioRecorder = {
           } else {
             interim += event.results[i][0].transcript;
           }
+        }
+        this.lastInterim = interim;
         }
         if (this.onProgress) {
           this.onProgress(this.finalTranscript + interim);
@@ -8514,6 +8523,7 @@ const AudioRecorder = {
       this.mediaRecorder = new MediaRecorder(stream, options);
       this.audioChunks = [];
       this.finalTranscript = '';
+      this.lastInterim = '';
       this.onStop = onStopCallback;
       this.onProgress = onProgressCallback;
 
@@ -8704,6 +8714,9 @@ function handleAudioDictateClick(btnId, inputId, draftsArray, containerId, onCha
 
 // Setup dictate buttons for New Record and Todo Modal after DOM loads
 document.addEventListener('DOMContentLoaded', () => {
+  handleVideoRecordClick('btn-video-record', state.diaryDraftImages, 'new-record-previews', () => {
+    renderDiary();
+  });
   handleAudioDictateClick(
     'btn-dictate-record', 
     'new-record-text', 
