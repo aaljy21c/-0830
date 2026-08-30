@@ -6,13 +6,15 @@ class NeonDrawingBoard {
     this.readOnly = options.readOnly || false;
 
     // Load initial data
-    
+
     // Multi-page State
     this.isMultiPage = false;
     this.pdfFileId = null;
     this._pages = [{ type: 'blank', _strokes: [], bgCanvas: null }];
     this.currentPageIndex = 0;
-    
+    this.layoutMode = localStorage.getItem('planeer_drawing_mode') || 'paged';
+    this.pageHeight = 1130; // Virtual page height
+
     Object.defineProperty(this, 'strokes', {
       get: () => this._pages[this.currentPageIndex]._strokes,
       set: (val) => { this._pages[this.currentPageIndex]._strokes = val; }
@@ -27,11 +29,16 @@ class NeonDrawingBoard {
     } else {
       this.strokes = options.initialData ? JSON.parse(JSON.stringify(options.initialData)) : [];
     }
-    
+
     const bgStroke = this.strokes.find(s => s.isBg);
 
-    const savedBg = localStorage.getItem('planeer_drawing_bg');
-    this.bgColor = bgStroke ? bgStroke.color : (savedBg || '#1e1e1e');
+    let globalBg = '#1e1e1e';
+    if (window.state && window.state.settings && window.state.settings.drawingBgColor) {
+      globalBg = window.state.settings.drawingBgColor;
+    } else {
+      globalBg = localStorage.getItem('planeer_drawing_bg') || '#1e1e1e';
+    }
+    this.bgColor = bgStroke ? bgStroke.color : globalBg;
     this.undoStack = [];
     this.redoStack = [];
 
@@ -43,7 +50,7 @@ class NeonDrawingBoard {
     this.highlighterColor = '#facc15';
     this.highlighterSize = 15;
     this.highlighterOpacity = 0.4;
-    
+
     this.penPresets = JSON.parse(localStorage.getItem('planeer_pen_presets')) || ['#ffffff', '#ff4d4d', '#4da6ff', '#50c878', '#facc15'];
     if (this.penPresets.length < 5) this.penPresets = [...this.penPresets, '#ffffff', '#ff4d4d', '#4da6ff', '#50c878', '#facc15'].slice(0, 5);
     this.hlPresets = JSON.parse(localStorage.getItem('planeer_hl_presets')) || ['#facc15', '#ff7b72', '#79c0ff', '#50c878', '#d8b4e2'];
@@ -56,7 +63,7 @@ class NeonDrawingBoard {
     this.holdTimer = null;
     this.isSnapped = false;
     this.penOnlyMode = true; // Pen Only mode (Palm rejection) by default
-    
+
     // Pan and Zoom
     this.viewScale = 1;
     this.panX = 0;
@@ -75,43 +82,60 @@ class NeonDrawingBoard {
     if (!this.readOnly) {
       this.bindEvents();
     }
-    
+
     // Resize handling
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.wrapper);
-    
+
     // Initial render
     setTimeout(() => this.resize(), 0);
   }
 
   initDOM() {
     this.container.innerHTML = '';
-    
+
     // Main wrapper
     this.wrapper = document.createElement('div');
     this.wrapper.className = 'neon-drawing-wrapper';
-    
+
     // Toolbar
     if (!this.readOnly) {
-      
-    // Sidebar
-    this.sidebar = document.createElement('div');
-    this.sidebar.className = 'drawing-sidebar hidden';
-    this.sidebar.innerHTML = `
+
+      // Sidebar
+      this.sidebar = document.createElement('div');
+      this.sidebar.className = 'drawing-sidebar hidden';
+      this.sidebar.innerHTML = `
       <div class="sidebar-header">
         <label class="sidebar-btn" style="display:block; text-align:center; cursor:pointer;">
           📄 PDF 불러오기
           <input type="file" id="pdf-import-input" accept="application/pdf" style="display:none">
         </label>
+        <button type="button" id="btn-add-blank-page" class="sidebar-btn" style="display:block; width:100%; text-align:center; margin-top:6px; padding:8px; background:rgba(255,255,255,0.1); border:1px dashed #888; border-radius:8px; color:#fff; cursor:pointer; font-size:0.9rem;">
+          ➕ 빈 페이지 추가
+        </button>
       </div>
       <div id="drawing-thumbnails" class="sidebar-thumbnails"></div>
     `;
-    this.container.appendChild(this.sidebar);
-    
-    this.sidebar.querySelector('#pdf-import-input').addEventListener('change', (e) => this.handlePdfImport(e));
+      this.container.appendChild(this.sidebar);
 
-    // Floating Toolbar
-    this.toolbar = document.createElement('div');
+      this.sidebar.querySelector('#pdf-import-input').addEventListener('change', (e) => this.handlePdfImport(e));
+
+      // Add blank page button
+      const btnAddBlankPage = this.sidebar.querySelector('#btn-add-blank-page');
+      if (btnAddBlankPage) {
+        btnAddBlankPage.addEventListener('click', () => {
+          this._pages.push({ type: 'blank', _strokes: [], bgCanvas: null });
+          this.isMultiPage = true;
+          this.currentPageIndex = this._pages.length - 1;
+          this.updateSidebar();
+          this.sidebar.classList.remove('hidden'); // keep sidebar open
+          this.resetViewToPage();
+          if (this.onChange) this.onChange(this.getData());
+        });
+      }
+
+      // Floating Toolbar
+      this.toolbar = document.createElement('div');
 
       this.toolbar.className = 'neon-drawing-toolbar';
       this.buildToolbar();
@@ -122,19 +146,19 @@ class NeonDrawingBoard {
     this.canvasContainer = document.createElement('div');
     this.canvasContainer.className = 'neon-drawing-canvas-container';
     this.canvasContainer.style.backgroundColor = this.bgColor;
-    
+
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
     // Prevent touch gestures like scrolling
     this.canvas.style.touchAction = 'none';
 
     this.canvasContainer.appendChild(this.canvas);
-    
+
     this.zoomIndicator = document.createElement('div');
     this.zoomIndicator.style.cssText = 'position:absolute; top:12px; right:12px; background:rgba(0,0,0,0.6); color:white; padding:4px 8px; border-radius:6px; font-size:0.8rem; pointer-events:none; z-index:100; transition: opacity 0.3s;';
     this.zoomIndicator.innerText = '100%';
     this.canvasContainer.appendChild(this.zoomIndicator);
-    
+
     this.wrapper.appendChild(this.canvasContainer);
     this.container.appendChild(this.wrapper);
 
@@ -157,6 +181,9 @@ class NeonDrawingBoard {
         <button class="tool-btn" data-tool="highlighter" title="형광펜">🖍️</button>
         <button class="tool-btn" data-tool="eraser" title="지우개">🧽</button>
         <button class="tool-btn" data-tool="lasso" title="올가미 선택">✂️</button>
+        <div class="tool-divider"></div>
+        <button type="button" id="btn-layout-mode" class="drawing-tool-btn" title="모드 전환 (현재: 페이지)" style="font-size: 1.1rem;">📄</button>
+        <button type="button" id="btn-drawing-close" class="drawing-tool-btn" title="닫기">❌</button>
       </div>
       <div class="drawing-settings">
         <!-- Settings dynamically change based on tool -->
@@ -171,12 +198,14 @@ class NeonDrawingBoard {
         <button class="action-btn" id="btn-save-image" title="이미지로 저장">💾</button>
         <button class="action-btn" id="btn-toggle-sidebar" title="페이지 목록">📑</button>
         <button class="action-btn" id="btn-export-pdf" title="PDF로 다운로드" style="display:none">📥</button>
+        <button class="action-btn" id="btn-zoom-out" title="축소">➖</button>
         <button class="action-btn" id="btn-reset-view" title="1:1 화면 초기화">🔍</button>
+        <button class="action-btn" id="btn-zoom-in" title="확대">➕</button>
         <button class="action-btn" id="btn-pen-mode" title="손가락 그리기 허용됨 (클릭하여 펜 전용 모드로 전환)">👆</button>
         <button class="action-btn" id="btn-undo" title="실행 취소">↩️</button>
         <button class="action-btn" id="btn-redo" title="다시 실행">↪️</button>
         <button class="action-btn" id="btn-clear" title="전체 지우기">🗑️</button>
-        ${this.onClose ? `<button class="drawing-toolbar-close-btn" id="btn-close-drawing" title="저장 후 닫기">저장/닫기</button>` : ''}
+        ${this.onClose ? `<button class="drawing-toolbar-close-btn" id="btn-close-drawing" title="저장 후 닫기">✅ 저장/닫기</button>` : ''}
       </div>
     `;
 
@@ -224,11 +253,41 @@ class NeonDrawingBoard {
       });
     }
 
+    // Layout mode toggle: paged <-> infinite scroll
+    const btnLayoutMode = this.toolbar.querySelector('#btn-layout-mode');
+    if (btnLayoutMode) {
+      btnLayoutMode.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.layoutMode = this.layoutMode === 'paged' ? 'infinite' : 'paged';
+        localStorage.setItem('planeer_drawing_mode', this.layoutMode);
+        btnLayoutMode.innerHTML = this.layoutMode === 'paged' ? '📄' : '📜';
+        btnLayoutMode.title = this.layoutMode === 'paged' ? '페이지 모드 (클릭하면 무한 스크롤)' : '무한 스크롤 모드 (클릭하면 페이지 모드)';
+        this.render();
+      });
+      // Init icon
+      btnLayoutMode.innerHTML = this.layoutMode === 'paged' ? '📄' : '📜';
+      btnLayoutMode.title = this.layoutMode === 'paged' ? '페이지 모드 (클릭하면 무한 스크롤)' : '무한 스크롤 모드 (클릭하면 페이지 모드)';
+    }
+
+    // X close button (no save)
+    const btnDrawingClose = this.toolbar.querySelector('#btn-drawing-close');
+    if (btnDrawingClose) {
+      btnDrawingClose.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (this.onClose) this.onClose(this.getData());
+      });
+    }
+
     const bgColorPicker = this.toolbar.querySelector('#bg-color-picker');
     if (bgColorPicker) {
       bgColorPicker.addEventListener('input', (e) => {
         this.bgColor = e.target.value;
         localStorage.setItem('planeer_drawing_bg', this.bgColor);
+        if (window.state) {
+          if (!window.state.settings) window.state.settings = {};
+          window.state.settings.drawingBgColor = this.bgColor;
+          if (typeof window.saveData === 'function') window.saveData();
+        }
         this.canvasContainer.style.backgroundColor = this.bgColor;
         this.strokes = this.strokes.filter(s => !s.isBg);
         this.strokes.unshift({ isBg: true, color: this.bgColor });
@@ -236,11 +295,11 @@ class NeonDrawingBoard {
       });
     }
 
-    
-    
+
+
     const btnExportPdf = this.toolbar.querySelector('#btn-export-pdf');
     if (btnExportPdf) {
-      if (this.isMultiPage) {
+      if (this.isMultiPage || this.layoutMode === 'paged') {
         btnExportPdf.style.display = 'inline-block';
       }
       btnExportPdf.addEventListener('click', async (e) => {
@@ -248,59 +307,100 @@ class NeonDrawingBoard {
         try {
           const originalText = btnExportPdf.innerHTML;
           btnExportPdf.innerHTML = '⏳';
-          
+
           const { PDFDocument } = window.PDFLib;
           const pdfDoc = await PDFDocument.create();
-          
-          for (let i = 0; i < this._pages.length; i++) {
-            const pageObj = this._pages[i];
-            
-            // Create a temp canvas matching the page size
-            const tempCanvas = document.createElement('canvas');
-            const targetWidth = pageObj.width || this.canvas.width;
-            const targetHeight = pageObj.height || this.canvas.height;
-            tempCanvas.width = targetWidth;
-            tempCanvas.height = targetHeight;
-            const tempCtx = tempCanvas.getContext('2d');
-            
-            // Draw background
-            if (pageObj.bgCanvas) {
-               tempCtx.drawImage(pageObj.bgCanvas, 0, 0, targetWidth, targetHeight);
-            } else {
-               tempCtx.fillStyle = this.bgColor;
-               tempCtx.fillRect(0, 0, targetWidth, targetHeight);
-            }
-            
-            // Draw strokes
-            pageObj._strokes.forEach(stroke => {
-              tempCtx.beginPath();
-              tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
-              tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
-              
-              if (stroke.tool === 'highlighter') {
-                tempCtx.globalCompositeOperation = 'multiply';
+
+
+          const pageWidth = this.canvas.width / window.devicePixelRatio;
+          const pageHeight = this.pageHeight || 1130;
+          const pageGap = 20;
+
+          if (this.isMultiPage) {
+            for (let i = 0; i < this._pages.length; i++) {
+              const pageObj = this._pages[i];
+
+              const tempCanvas = document.createElement('canvas');
+              const targetWidth = pageObj.width || this.canvas.width;
+              const targetHeight = pageObj.height || this.canvas.height;
+              tempCanvas.width = targetWidth;
+              tempCanvas.height = targetHeight;
+              const tempCtx = tempCanvas.getContext('2d');
+
+              if (pageObj.bgCanvas) {
+                tempCtx.drawImage(pageObj.bgCanvas, 0, 0, targetWidth, targetHeight);
+              } else {
+                tempCtx.fillStyle = this.bgColor;
+                tempCtx.fillRect(0, 0, targetWidth, targetHeight);
               }
-              
-              stroke.points.forEach((pt, j) => {
-                if (j===0) tempCtx.moveTo(pt.x, pt.y); else tempCtx.lineTo(pt.x, pt.y);
+
+              pageObj._strokes.forEach(stroke => {
+                tempCtx.beginPath();
+                tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
+                tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
+
+                if (stroke.tool === 'highlighter') {
+                  tempCtx.globalCompositeOperation = 'multiply';
+                }
+
+                stroke.points.forEach((pt, j) => {
+                  if (j === 0) tempCtx.moveTo(pt.x, pt.y); else tempCtx.lineTo(pt.x, pt.y);
+                });
+                tempCtx.stroke();
+                tempCtx.globalCompositeOperation = 'source-over';
               });
-              tempCtx.stroke();
-              tempCtx.globalCompositeOperation = 'source-over';
+
+              const pngDataUrl = tempCanvas.toDataURL('image/png');
+              const pngImage = await pdfDoc.embedPng(pngDataUrl);
+              const pdfPage = pdfDoc.addPage([targetWidth, targetHeight]);
+              pdfPage.drawImage(pngImage, { x: 0, y: 0, width: targetWidth, height: targetHeight });
+            }
+          } else if (this.layoutMode === 'paged') {
+            let maxY = 0;
+            this.strokes.forEach(stroke => {
+              stroke.points.forEach(p => { if (p.y > maxY) maxY = p.y; });
             });
-            
-            // Embed to PDF
-            const pngDataUrl = tempCanvas.toDataURL('image/png');
-            const pngImage = await pdfDoc.embedPng(pngDataUrl);
-            
-            const pdfPage = pdfDoc.addPage([targetWidth, targetHeight]);
-            pdfPage.drawImage(pngImage, {
-              x: 0,
-              y: 0,
-              width: targetWidth,
-              height: targetHeight
-            });
+            const numPages = Math.max(1, Math.ceil(maxY / (pageHeight + pageGap)));
+
+            for (let i = 0; i < numPages; i++) {
+              const yOffset = i * (pageHeight + pageGap);
+              const tempCanvas = document.createElement('canvas');
+              tempCanvas.width = pageWidth;
+              tempCanvas.height = pageHeight;
+              const tempCtx = tempCanvas.getContext('2d');
+
+              tempCtx.fillStyle = this.bgColor;
+              tempCtx.fillRect(0, 0, pageWidth, pageHeight);
+
+              this.strokes.forEach(stroke => {
+                if (stroke.isBg) return;
+                // Filter strokes that intersect this page bounding box
+                let inBounds = false;
+                stroke.points.forEach(p => {
+                  if (p.y >= yOffset && p.y <= yOffset + pageHeight) inBounds = true;
+                });
+                if (!inBounds) return;
+
+                tempCtx.beginPath();
+                tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
+                tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
+                if (stroke.tool === 'highlighter') tempCtx.globalCompositeOperation = 'multiply';
+
+                stroke.points.forEach((pt, j) => {
+                  const adjY = pt.y - yOffset; // Offset local to page
+                  if (j === 0) tempCtx.moveTo(pt.x, adjY); else tempCtx.lineTo(pt.x, adjY);
+                });
+                tempCtx.stroke();
+                tempCtx.globalCompositeOperation = 'source-over';
+              });
+
+              const pngDataUrl = tempCanvas.toDataURL('image/png');
+              const pngImage = await pdfDoc.embedPng(pngDataUrl);
+              const pdfPage = pdfDoc.addPage([pageWidth, pageHeight]);
+              pdfPage.drawImage(pngImage, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+            }
           }
-          
+
           const pdfBytes = await pdfDoc.save();
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
           const url = URL.createObjectURL(blob);
@@ -311,9 +411,9 @@ class NeonDrawingBoard {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          
+
           btnExportPdf.innerHTML = originalText;
-        } catch(err) {
+        } catch (err) {
           console.error('PDF Export Error:', err);
           alert('PDF 다운로드 중 오류가 발생했습니다.');
           btnExportPdf.innerHTML = '📥';
@@ -326,6 +426,22 @@ class NeonDrawingBoard {
       btnToggleSidebar.addEventListener('click', (e) => {
         e.preventDefault();
         this.sidebar.classList.toggle('hidden');
+      });
+    }
+
+    const btnZoomIn = this.toolbar.querySelector('#btn-zoom-in');
+    if (btnZoomIn) {
+      btnZoomIn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.doZoom(1.2);
+      });
+    }
+
+    const btnZoomOut = this.toolbar.querySelector('#btn-zoom-out');
+    if (btnZoomOut) {
+      btnZoomOut.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.doZoom(1 / 1.2);
       });
     }
 
@@ -346,37 +462,130 @@ class NeonDrawingBoard {
     if (btnSaveImage) {
       btnSaveImage.addEventListener('click', (e) => {
         e.preventDefault();
-        // Create a temporary canvas to fill background
+
+        let minX = 0, minY = 0, maxX = this.canvas.width, maxY = this.canvas.height;
+        let hasStrokes = false;
+
+        this.strokes.forEach(s => {
+          if (s.isBg) return;
+          s.points.forEach(p => {
+            if (!hasStrokes) { minX = maxX = p.x; minY = maxY = p.y; hasStrokes = true; }
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+          });
+        });
+
+        minX -= 50; minY -= 50; maxX += 50; maxY += 50;
+        if (maxX - minX < this.canvas.width) { minX = 0; maxX = this.canvas.width; }
+        if (maxY - minY < this.canvas.height) { minY = 0; maxY = Math.max(this.canvas.height, maxY); }
+
+        const targetWidth = maxX - minX;
+        const targetHeight = maxY - minY;
+
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = this.canvas.width;
-        tempCanvas.height = this.canvas.height;
+        tempCanvas.width = targetWidth;
+        tempCanvas.height = targetHeight;
         const tempCtx = tempCanvas.getContext('2d');
-        
-        // Fill background with card-bg color
+
         tempCtx.fillStyle = this.bgColor;
-        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-        
-        // Draw the drawing canvas over it
-        tempCtx.drawImage(this.canvas, 0, 0);
-        
-        // Export and download
+        tempCtx.fillRect(0, 0, targetWidth, targetHeight);
+
+        this.strokes.forEach(stroke => {
+          if (stroke.isBg) return;
+          tempCtx.beginPath();
+          tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
+          tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
+
+          if (stroke.tool === 'highlighter') {
+            tempCtx.globalCompositeOperation = 'multiply';
+          }
+
+          stroke.points.forEach((pt, j) => {
+            const adjX = pt.x - minX;
+            const adjY = pt.y - minY;
+            if (j === 0) tempCtx.moveTo(adjX, adjY); else tempCtx.lineTo(adjX, adjY);
+          });
+          tempCtx.stroke();
+          tempCtx.globalCompositeOperation = 'source-over';
+        });
+
         const dataUrl = tempCanvas.toDataURL('image/png');
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        
-        // Format YYYYMMDD_HHMM
         const now = new Date();
-        const dateStr = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0');
-        
-        a.download = `planeer_drawing_${dateStr}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        const dateStr = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
+        const filename = `planeer_drawing_${dateStr}.png`;
+
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        if (isMobile) {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.9); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px;';
+
+          const title = document.createElement('div');
+          title.innerHTML = '이미지를 길게 눌러서 <strong>[사진 앱에 저장]</strong>을 선택하세요.';
+          title.style.cssText = 'color:white; margin-bottom:20px; text-align:center; font-size:1rem; line-height:1.5; background:rgba(255,255,255,0.1); padding:12px; border-radius:8px;';
+
+          const img = document.createElement('img');
+          img.src = dataUrl;
+          img.style.cssText = 'max-width:100%; max-height:70vh; object-fit:contain; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+
+          const closeBtn = document.createElement('button');
+          closeBtn.innerText = '닫기';
+          closeBtn.style.cssText = 'margin-top:20px; padding:12px 32px; font-size:1.1rem; border-radius:24px; background:#ef4444; color:white; border:none; font-weight:bold; cursor:pointer;';
+          closeBtn.onclick = () => document.body.removeChild(overlay);
+
+          overlay.appendChild(title);
+          overlay.appendChild(img);
+          overlay.appendChild(closeBtn);
+          document.body.appendChild(overlay);
+        } else {
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
       });
     }
 
     this.settingsContainer = this.toolbar.querySelector('.drawing-settings');
     this.updateSettingsUI();
+  }
+
+  onWheel(e) {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const zoomFactor = e.deltaY > 0 ? (1 / 1.1) : 1.1;
+      this.doZoom(zoomFactor, e);
+    }
+  }
+
+  doZoom(factor, e = null) {
+    let newScale = this.viewScale * factor;
+    newScale = Math.max(0.2, Math.min(newScale, 5.0));
+
+    let zoomCenterX, zoomCenterY;
+    const rect = this.canvas.getBoundingClientRect();
+    if (e) {
+      zoomCenterX = e.clientX - rect.left;
+      zoomCenterY = e.clientY - rect.top;
+    } else {
+      zoomCenterX = rect.width / 2;
+      zoomCenterY = rect.height / 2;
+    }
+
+    const mouseBeforeX = (zoomCenterX - this.panX) / this.viewScale;
+    const mouseBeforeY = (zoomCenterY - this.panY) / this.viewScale;
+
+    this.viewScale = newScale;
+
+    this.panX = zoomCenterX - mouseBeforeX * this.viewScale;
+    this.panY = zoomCenterY - mouseBeforeY * this.viewScale;
+
+    this.updateZoomIndicator();
+    this.render();
   }
 
   updateZoomIndicator() {
@@ -392,7 +601,7 @@ class NeonDrawingBoard {
 
   updateSettingsUI() {
     this.settingsContainer.innerHTML = '';
-    
+
     const renderPresets = (presets) => {
       return presets.map((color, idx) => {
         const isActive = (this.currentTool === 'pen' && this.penColor === color) || (this.currentTool === 'highlighter' && this.highlighterColor === color);
@@ -429,7 +638,7 @@ class NeonDrawingBoard {
       const colorInputId = isPen ? '#pen-color' : '#hl-color';
       const sizeInputId = isPen ? '#pen-size' : '#hl-size';
       const opacityInputId = isPen ? '#pen-opacity' : '#hl-opacity';
-      
+
       const hiddenPicker = this.settingsContainer.querySelector('#hidden-preset-picker');
       let targetPresetIndex = -1;
 
@@ -451,7 +660,7 @@ class NeonDrawingBoard {
           e.preventDefault();
           const color = btn.dataset.color;
           const isActive = (isPen ? this.penColor : this.highlighterColor) === color;
-          
+
           if (isActive) {
             targetPresetIndex = parseInt(btn.dataset.index);
             hiddenPicker.value = color;
@@ -485,6 +694,9 @@ class NeonDrawingBoard {
     this.canvas.addEventListener('pointermove', this.onPointerMove.bind(this));
     this.canvas.addEventListener('pointerup', this.onPointerUp.bind(this));
     this.canvas.addEventListener('pointerout', this.onPointerUp.bind(this));
+
+    // Mouse wheel zoom
+    this.wrapper.addEventListener('wheel', this.onWheel.bind(this), { passive: false });
   }
 
   getPointerPos(e) {
@@ -497,19 +709,19 @@ class NeonDrawingBoard {
 
   onPointerDown(e) {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
-    
+
     this.isTempEraser = false;
     if (e.pointerType === 'pen' && (e.button === 2 || e.button === 5 || (e.buttons & 2) || (e.buttons & 32))) {
       this.isTempEraser = true;
     }
-    
+
     if (this.penOnlyMode && e.pointerType === 'touch') {
       this.activePointers.set(e.pointerId, e);
       if (this.activePointers.size < 2) return;
     } else {
       this.activePointers.set(e.pointerId, e);
     }
-    
+
     if (this.activePointers.size >= 2) {
       this.isDrawing = false;
       this.isPanning = true;
@@ -523,12 +735,12 @@ class NeonDrawingBoard {
       this.pinchPanStartY = (midY - rect.top) - this.panY;
       return;
     }
-    
+
     this.canvas.setPointerCapture(e.pointerId);
-    
+
     const pos = this.getPointerPos(e);
     const activeTool = this.isTempEraser ? 'eraser' : this.currentTool;
-    
+
     if (activeTool === 'lasso' && this.selectedStrokes.length > 0) {
       if (this.isPointInSelectionBounds(pos)) {
         this.isDraggingSelection = true;
@@ -559,7 +771,7 @@ class NeonDrawingBoard {
     } else if (activeTool === 'eraser') {
       this.eraseAt(pos);
     }
-    
+
     this.render();
   }
 
@@ -567,21 +779,21 @@ class NeonDrawingBoard {
     if (this.activePointers.has(e.pointerId)) {
       this.activePointers.set(e.pointerId, e);
     }
-    
+
     if (this.isPanning && this.activePointers.size >= 2) {
       const pts = Array.from(this.activePointers.values());
       const currentDist = Math.hypot(pts[0].clientX - pts[1].clientX, pts[0].clientY - pts[1].clientY);
       const midX = (pts[0].clientX + pts[1].clientX) / 2;
       const midY = (pts[0].clientY + pts[1].clientY) / 2;
       const rect = this.canvas.getBoundingClientRect();
-      
+
       let newScale = this.initialScale * (currentDist / (this.initialPinchDist || 1));
       newScale = Math.max(0.2, Math.min(newScale, 5.0));
-      
+
       this.viewScale = newScale;
       this.panX = (midX - rect.left) - this.pinchPanStartX * (newScale / this.initialScale);
       this.panY = (midY - rect.top) - this.pinchPanStartY * (newScale / this.initialScale);
-      
+
       this.updateZoomIndicator();
       this.render();
       return;
@@ -592,7 +804,7 @@ class NeonDrawingBoard {
     if (this.isDraggingSelection) {
       const dx = pos.x - this.dragStartPoint.x;
       const dy = pos.y - this.dragStartPoint.y;
-      
+
       this.selectedStrokes.forEach((s, idx) => {
         const orig = this.originalSelectionStrokes[idx];
         s.points = orig.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
@@ -606,33 +818,32 @@ class NeonDrawingBoard {
     // Auto-expand canvas height if drawing near the bottom
     const containerHeight = this.canvasContainer.clientHeight;
     const physicalY = pos.y * this.viewScale + this.panY;
-    if (physicalY > containerHeight - 50) {
-      this.canvasContainer.style.minHeight = `${containerHeight + 300}px`;
-      // Auto-scroll down if inside scrollable modal
-      if (this.wrapper && this.wrapper.scrollHeight > this.wrapper.clientHeight) {
-        this.wrapper.scrollTop += 20;
-      }
+    if (pos.y > containerHeight - 80) {
+      // Auto-pan down (moves the canvas up)
+      this.panY -= 15 / this.viewScale;
+      // Also update the canvas minHeight to allow native scrollbars to grow if desired
+      this.canvasContainer.style.minHeight = `${Math.max(this.canvasContainer.clientHeight, (physicalY + 300))}px`;
     }
 
     const activeTool = this.isTempEraser ? 'eraser' : this.currentTool;
 
     if (activeTool === 'pen' || activeTool === 'highlighter') {
       if (this.isSnapped && this.currentStroke) {
-         this.currentStroke.points[this.currentStroke.points.length - 1] = pos;
+        this.currentStroke.points[this.currentStroke.points.length - 1] = pos;
       } else {
-         const lastPt = this.points[this.points.length - 1];
-         if (Math.hypot(pos.x - lastPt.x, pos.y - lastPt.y) > 3) {
-            this.resetHoldTimer();
-         }
-         this.points.push(pos);
-         this.currentStroke.points.push(pos);
+        const lastPt = this.points[this.points.length - 1];
+        if (Math.hypot(pos.x - lastPt.x, pos.y - lastPt.y) > 3) {
+          this.resetHoldTimer();
+        }
+        this.points.push(pos);
+        this.currentStroke.points.push(pos);
       }
     } else if (activeTool === 'lasso') {
       this.lassoPoints.push(pos);
     } else if (activeTool === 'eraser') {
       this.eraseAt(pos);
     }
-    
+
     this.render();
   }
 
@@ -644,7 +855,7 @@ class NeonDrawingBoard {
     }
 
     this.clearHoldTimer();
-    
+
     if (this.isDraggingSelection) {
       this.isDraggingSelection = false;
       this.saveState();
@@ -657,7 +868,7 @@ class NeonDrawingBoard {
     const activeTool = this.isTempEraser ? 'eraser' : this.currentTool;
 
     if (activeTool === 'pen' || activeTool === 'highlighter') {
-      if (this.currentStroke && this.currentStroke.points.length > 1) {
+      if (this.currentStroke && this.currentStroke.points.length > 0) {
         this.strokes.push(this.currentStroke);
         this.saveState();
       }
@@ -819,38 +1030,38 @@ class NeonDrawingBoard {
     }
   }
 
-  
+
   async handlePdfImport(e) {
     const file = e.target.files[0];
     if (!file) return;
-    
+
     try {
       if (!window.pdfjsLib) throw new Error("PDF.js not loaded");
-      
+
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      
+
       // Save PDF to FileDB
       const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
       this.pdfFileId = await FileDB.saveFile(blob, 'pdf', file.name);
-      
+
       this.isMultiPage = true;
       this._pages = [];
       this.undoStack = [];
       this.redoStack = [];
-      
+
       const scale = 2.0; // High resolution rendering
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale });
-        
+
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        
+
         await page.render({ canvasContext: ctx, viewport }).promise;
-        
+
         this._pages.push({
           type: 'pdf',
           pdfPageNum: i,
@@ -860,10 +1071,10 @@ class NeonDrawingBoard {
           _strokes: []
         });
       }
-      
+
       this.currentPageIndex = 0;
       this.updateSidebar();
-      const expBtn = this.toolbar.querySelector("#btn-export-pdf"); if(expBtn) expBtn.style.display="inline-block";
+      const expBtn = this.toolbar.querySelector("#btn-export-pdf"); if (expBtn) expBtn.style.display = "inline-block";
       this.resetViewToPage();
     } catch (err) {
       console.error("PDF Import Error:", err);
@@ -876,11 +1087,11 @@ class NeonDrawingBoard {
     try {
       const fileRecord = await FileDB.getFile(this.pdfFileId);
       if (!fileRecord || !fileRecord.blob) return;
-      
+
       const arrayBuffer = await fileRecord.blob.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       const scale = 2.0;
-      
+
       for (let i = 1; i <= pdf.numPages; i++) {
         if (i - 1 < this._pages.length) {
           const page = await pdf.getPage(i);
@@ -890,14 +1101,14 @@ class NeonDrawingBoard {
           canvas.width = viewport.width;
           canvas.height = viewport.height;
           await page.render({ canvasContext: ctx, viewport }).promise;
-          this._pages[i-1].bgCanvas = canvas;
-          this._pages[i-1].width = viewport.width;
-          this._pages[i-1].height = viewport.height;
+          this._pages[i - 1].bgCanvas = canvas;
+          this._pages[i - 1].width = viewport.width;
+          this._pages[i - 1].height = viewport.height;
         }
       }
       this.updateSidebar();
       this.resetViewToPage();
-    } catch(e) {
+    } catch (e) {
       console.error("Existing PDF Load Error", e);
     }
   }
@@ -931,12 +1142,12 @@ class NeonDrawingBoard {
   updateSidebar() {
     const container = this.sidebar.querySelector('#drawing-thumbnails');
     container.innerHTML = '';
-    
+
     this._pages.forEach((page, idx) => {
       const thumb = document.createElement('div');
       thumb.className = 'page-thumbnail' + (idx === this.currentPageIndex ? ' active' : '');
       thumb.draggable = true;
-      
+
       if (page.bgCanvas) {
         // Create thumbnail sized canvas
         const tCanvas = document.createElement('canvas');
@@ -944,7 +1155,7 @@ class NeonDrawingBoard {
         tCanvas.height = 150 * (page.bgCanvas.height / page.bgCanvas.width);
         const tCtx = tCanvas.getContext('2d');
         tCtx.drawImage(page.bgCanvas, 0, 0, tCanvas.width, tCanvas.height);
-        
+
         // Draw strokes on thumbnail
         const pScale = tCanvas.width / page.bgCanvas.width;
         tCtx.scale(pScale, pScale);
@@ -953,24 +1164,24 @@ class NeonDrawingBoard {
           tCtx.lineCap = 'round'; tCtx.lineJoin = 'round';
           tCtx.lineWidth = s.size; tCtx.strokeStyle = s.color; tCtx.globalAlpha = s.opacity || 1;
           s.points.forEach((pt, i) => {
-            if (i===0) tCtx.moveTo(pt.x, pt.y); else tCtx.lineTo(pt.x, pt.y);
+            if (i === 0) tCtx.moveTo(pt.x, pt.y); else tCtx.lineTo(pt.x, pt.y);
           });
           tCtx.stroke();
         });
-        
+
         thumb.appendChild(tCanvas);
       } else {
         thumb.style.height = '150px';
         thumb.style.background = '#333';
       }
-      
+
       const num = document.createElement('div');
       num.className = 'page-thumbnail-num';
       num.textContent = (idx + 1);
       thumb.appendChild(num);
-      
+
       thumb.addEventListener('click', () => this.switchPage(idx));
-      
+
       // Drag and drop
       thumb.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData('text/plain', idx);
@@ -1001,12 +1212,12 @@ class NeonDrawingBoard {
           this.updateSidebar();
         }
       });
-      
+
       container.appendChild(thumb);
     });
   }
 
-  
+
   getData() {
     if (this.isMultiPage) {
       return {
@@ -1059,18 +1270,18 @@ class NeonDrawingBoard {
   resize() {
     const rect = this.canvasContainer.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    
+
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = rect.width * dpr;
     this.canvas.height = rect.height * dpr;
     this.canvas.style.width = `${rect.width}px`;
     this.canvas.style.height = `${rect.height}px`;
     this.ctx.scale(dpr, dpr);
-    
+
     if (this.readOnly) {
       this.fitContent();
     }
-    
+
     this.render();
   }
 
@@ -1078,7 +1289,7 @@ class NeonDrawingBoard {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     this.ctx.save();
-    
+
     // Apply pan and zoom
     this.ctx.translate(this.panX, this.panY);
     this.ctx.scale(this.viewScale, this.viewScale);
@@ -1086,6 +1297,29 @@ class NeonDrawingBoard {
     const currentPage = this._pages[this.currentPageIndex];
     if (currentPage && currentPage.bgCanvas) {
       this.ctx.drawImage(currentPage.bgCanvas, 0, 0);
+    } else if (this.layoutMode === 'paged' && !this.isMultiPage) {
+      // Calculate how many pages to draw based on strokes
+      let maxY = 0;
+      this.strokes.forEach(stroke => {
+        stroke.points.forEach(p => {
+          if (p.y > maxY) maxY = p.y;
+        });
+      });
+      const pageHeight = this.pageHeight || 1130;
+      const pageGap = 20;
+      const pageWidth = this.canvas.width / window.devicePixelRatio;
+
+      const numPages = Math.max(1, Math.ceil(maxY / (pageHeight + pageGap)));
+
+      for (let i = 0; i < numPages + 1; i++) { // +1 to always show the next blank page
+        const yOffset = i * (pageHeight + pageGap);
+        // Draw page shadow
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.fillRect(5, yOffset + 5, pageWidth, pageHeight);
+        // Draw page background
+        this.ctx.fillStyle = this.bgColor;
+        this.ctx.fillRect(0, yOffset, pageWidth, pageHeight);
+      }
     }
 
 
@@ -1128,7 +1362,7 @@ class NeonDrawingBoard {
       this.ctx.setLineDash([4 / this.viewScale, 4 / this.viewScale]);
       this.ctx.strokeRect(minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2);
       this.ctx.setLineDash([]);
-      
+
       this.selectedStrokes.forEach(stroke => {
         this.ctx.save();
         this.ctx.globalAlpha = 0.3;
@@ -1145,7 +1379,7 @@ class NeonDrawingBoard {
   drawStroke(stroke, isHighlight = false) {
     if (stroke.isBg) return;
     if (stroke.points.length < 2) return;
-    
+
     this.ctx.save();
     this.ctx.beginPath();
     this.ctx.lineCap = 'round';
@@ -1156,9 +1390,9 @@ class NeonDrawingBoard {
 
     // Simulate highlighter blending
     if (stroke.tool === 'highlighter' && !isHighlight) {
-       this.ctx.globalCompositeOperation = 'multiply'; // Works well on light backgrounds
+      this.ctx.globalCompositeOperation = 'multiply'; // Works well on light backgrounds
     } else {
-       this.ctx.globalCompositeOperation = 'source-over';
+      this.ctx.globalCompositeOperation = 'source-over';
     }
 
     if (stroke.isShape) {
@@ -1174,7 +1408,7 @@ class NeonDrawingBoard {
       const last = stroke.points[stroke.points.length - 1];
       this.ctx.lineTo(last.x, last.y);
     }
-    
+
     this.ctx.stroke();
     this.ctx.restore();
   }

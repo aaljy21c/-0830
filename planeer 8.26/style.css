@@ -5230,3 +5230,38 @@ body.light-theme #font-size-modal #font-size-modal-backdrop {
 }
 
 
+/* ====== PHONE SAFE AREA (Bottom Navigation Bar) ====== */
+/* Prevent content from hiding behind phone navigation buttons */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .phone-mode .todo-list {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 80px);
+  }
+
+  .phone-mode .main-content,
+  .phone-mode .todo-section,
+  .phone-mode .content-wrapper {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 60px);
+  }
+
+  .phone-mode .fab-btn {
+    bottom: calc(env(safe-area-inset-bottom) + 20px);
+  }
+}
+
+/* Fallback for phones without env() support */
+.phone-mode .todo-list {
+  padding-bottom: 80px;
+}
+
+/* Drawing toolbar mobile adjustments */
+.phone-mode .neon-drawing-toolbar {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Drawing fullscreen modal safe area */
+#drawing-fullscreen-modal {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+
+

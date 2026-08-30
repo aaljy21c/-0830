@@ -1,21 +1,17 @@
 .neon-drawing-wrapper {
   position: relative;
   width: 100%;
-  border: 1px solid var(--panel-border, #333);
-  border-radius: 8px;
-  background-color: var(--card-bg, #1e1e1e);
-  overflow-y: auto;
-  overflow-x: hidden;
+  height: 100%;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  margin-top: 8px;
-  min-height: 400px;
+  background: var(--bg-body, #121212);
 }
 
 .neon-drawing-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-wrap: nowrap;
+  align-items: center; justify-content: center;
   justify-content: space-between;
   padding: 8px;
   background-color: rgba(30, 30, 30, 0.95); /* Dark background with opacity for visibility */
@@ -36,11 +32,17 @@
   background: none;
   border: 1px solid transparent;
   color: var(--text-color, #fff);
-  font-size: 1.2rem;
-  padding: 6px;
+  font-size: 1.1rem;
+  padding: 0;
   border-radius: 6px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
 }
 
 .tool-btn:hover, .action-btn:hover {
@@ -104,12 +106,10 @@
 }
 
 .neon-drawing-canvas-container {
-  position: relative;
-  width: 100%;
-  min-height: 400px; /* Default height increased */
   flex: 1;
-  background-color: transparent;
-  cursor: crosshair;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
 }
 
 .neon-drawing-canvas-container canvas {
@@ -140,34 +140,45 @@
 }
 
 .drawing-fullscreen-modal .neon-drawing-toolbar {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-radius: 12px;
-  padding: 8px 16px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-  background-color: rgba(30, 30, 30, 0.85);
-  backdrop-filter: blur(12px);
-  width: 95%;
-  max-width: 600px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  top: auto;
-  z-index: 10100;
+  position: relative;
+  top: 0;
+  left: 0;
+  transform: none;
+  border-radius: 0;
+  padding: 8px;
+  background-color: var(--bg-nav, #1e1e1e);
+  width: 100%;
+  max-width: none;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 100;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+}
+.drawing-fullscreen-modal .neon-drawing-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .drawing-toolbar-close-btn {
-  background: #ef4444;
+  background: #3b82f6;
   color: white;
   border: none;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: bold;
+  padding: 0 14px;
+  border-radius: 18px;
+  font-weight: 600;
   cursor: pointer;
-  margin-left: 8px;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  flex-shrink: 0;
+  height: 32px;
+  font-size: 0.9rem;
+  margin-left: 8px;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
 }
 
 .drawing-toolbar-close-btn:hover {

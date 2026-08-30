@@ -3278,11 +3278,16 @@ function setupEventListeners() {
       let processed = 0;
       files.forEach(file => {
         if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(id => {
+          FileDB.saveFile(file, file.type, file.name).then(async id => {
+            let posterDataUrl = null;
+            if (file.type.startsWith('video/')) {
+              posterDataUrl = await captureVideoThumbnail(file);
+            }
             state.diaryDraftImages.push({
               fileId: id,
               type: file.type.startsWith('video/') ? 'video' : 'pdf',
-              name: file.name
+              name: file.name,
+              poster: posterDataUrl
             });
             processed++;
             if (processed === files.length) {
@@ -3326,6 +3331,17 @@ function setupEventListeners() {
 
   const closeLightbox = () => {
     if (lightboxModal) lightboxModal.classList.add('hidden');
+    // Stop any playing video when closing
+    const mediaContainer = document.getElementById('lightbox-media-container');
+    if (mediaContainer) {
+      const vid = mediaContainer.querySelector('video');
+      if (vid) {
+        vid.pause();
+        vid.src = '';
+      }
+      mediaContainer.innerHTML = '';
+      mediaContainer.style.display = 'none';
+    }
   };
 
   if (btnCloseLightbox) btnCloseLightbox.addEventListener('click', closeLightbox);
@@ -3571,11 +3587,16 @@ function setupEventListeners() {
       let processed = 0;
       files.forEach(file => {
         if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(id => {
+          FileDB.saveFile(file, file.type, file.name).then(async id => {
+            let posterDataUrl = null;
+            if (file.type.startsWith('video/')) {
+              posterDataUrl = await captureVideoThumbnail(file);
+            }
             todoEditDraftImages.push({
               fileId: id,
               type: file.type.startsWith('video/') ? 'video' : 'pdf',
-              name: file.name
+              name: file.name,
+              poster: posterDataUrl
             });
             processed++;
             if (processed === files.length) {
@@ -4391,6 +4412,12 @@ function openTodoEditModal(todoId) {
     // Remove existing event listeners by replacing the node (to prevent duplicates)
     const newBtn = todoDictateBtn.cloneNode(true);
     todoDictateBtn.parentNode.replaceChild(newBtn, todoDictateBtn);
+    handleVideoRecordClick(
+      'btn-video-todo-modal',
+      todoEditDraftImages,
+      'todo-edit-modal-previews',
+      () => renderTodoEditPreviews()
+    );
     handleAudioDictateClick(
       'btn-dictate-todo-modal', 
       'todo-edit-modal-memo', 
@@ -5248,7 +5275,14 @@ function renderDiary() {
           
           let processed = 0;
           files.forEach(file => {
-            compressAndSaveImage(file, (dataUrl) => {
+            if (file.type.startsWith('video/') || file.type === 'application/pdf') {
+          FileDB.saveFile(file, file.type, file.name).then(id => {
+            todoEditDraftImages.push({ fileId: id, type: file.type.startsWith('video/') ? 'video' : 'pdf', name: file.name });
+            processed++;
+            if (processed === files.length) { renderTodoEditPreviews(); if (statusSpan) statusSpan.textContent = '파일 추가 완료'; }
+          });
+        } else {
+          compressAndSaveImage(file, (dataUrl) => {
               state.diaryDraftImages.push({
                 src: dataUrl,
                 rotate: 0,
@@ -7678,7 +7712,7 @@ function renderTodos() {
       memoPhotosDiv.style.gap = '8px';
       memoPhotosDiv.style.marginTop = '6px';
       
-      todo.memoImages.forEach((imgObj, idx) => {
+      todo.memoImages.forEach((mediaObj, idx) => {
         const thumb = document.createElement('div');
         thumb.style.width = '60px';
         thumb.style.height = '60px';
@@ -7686,22 +7720,59 @@ function renderTodos() {
         thumb.style.overflow = 'hidden';
         thumb.style.border = '1px solid var(--panel-border)';
         thumb.style.cursor = 'pointer';
+        thumb.style.position = 'relative';
         
-        const img = document.createElement('img');
-        img.src = imgObj.src || imgObj;
-        img.style = getImageStyle(typeof imgObj === 'string' ? {src: imgObj, mode: 'cover'} : imgObj);
-        img.style.width = '100%';
-        img.style.height = '100%';
-        img.style.objectFit = (imgObj.mode || 'cover') === 'contain' ? 'contain' : 'cover';
+        const isVideo = mediaObj.type === 'video';
+        if (isVideo) {
+          thumb.style.backgroundColor = 'black';
+        }
         
-        thumb.appendChild(img);
+        const mediaContainer = createMediaElementAsync(mediaObj, true, null, null);
+        mediaContainer.style.width = '100%';
+        mediaContainer.style.height = '100%';
+        mediaContainer.style.pointerEvents = 'none'; 
+        thumb.appendChild(mediaContainer);
+        
         thumb.addEventListener('click', (e) => {
           e.stopPropagation();
-          openLightbox(todo.memoImages, idx, false);
+          openLightbox(todo.memoImages, idx, true);
         });
         memoPhotosDiv.appendChild(thumb);
       });
       itemLeft.appendChild(memoPhotosDiv);
+    }
+
+    if (todo.memoVideos && todo.memoVideos.length > 0) {
+      const memoVideosDiv = document.createElement('div');
+      memoVideosDiv.style.display = 'flex';
+      memoVideosDiv.style.flexWrap = 'wrap';
+      memoVideosDiv.style.gap = '8px';
+      memoVideosDiv.style.marginTop = '6px';
+      
+      todo.memoVideos.forEach((vidObj, idx) => {
+        const thumb = document.createElement('div');
+        thumb.style.width = '60px';
+        thumb.style.height = '60px';
+        thumb.style.borderRadius = '8px';
+        thumb.style.overflow = 'hidden';
+        thumb.style.border = '1px solid var(--panel-border)';
+        thumb.style.cursor = 'pointer';
+        thumb.style.position = 'relative';
+        thumb.style.backgroundColor = 'black'; // background for videos
+        
+        const mediaContainer = createMediaElementAsync(vidObj, true, null, null);
+        mediaContainer.style.width = '100%';
+        mediaContainer.style.height = '100%';
+        mediaContainer.style.pointerEvents = 'none'; 
+        thumb.appendChild(mediaContainer);
+        
+        thumb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openLightbox(todo.memoVideos, idx, true);
+        });
+        memoVideosDiv.appendChild(thumb);
+      });
+      itemLeft.appendChild(memoVideosDiv);
     }
 
     // Memo Drawing rendering
@@ -8331,9 +8402,11 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
     mediaObj = { src: mediaObj, type: 'image' };
   }
 
-  if (!mediaObj.type || mediaObj.type === 'image' || mediaObj.src) {
+  const isDataVideo = typeof mediaObj.src === 'string' && mediaObj.src.startsWith('data:video/');
+  
+  if (!isDataVideo && (!mediaObj.type || mediaObj.type === 'image' || (mediaObj.src && mediaObj.type !== 'video'))) {
     const img = document.createElement('img');
-    img.src = mediaObj.src;
+    img.src = mediaObj.src || mediaObj.poster;
     if (mediaObj.rotate !== undefined) img.style = getImageStyle(mediaObj);
     if (!isEditMode) {
       img.style.cursor = 'pointer';
@@ -8403,6 +8476,58 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
 }
 
 // ====== FILE DB (IndexedDB) ======
+const GDriveMediaSync = {
+  async uploadMedia(id, blob, type, name) {
+    if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return;
+    try {
+      const metadata = { name: 'neon_media_' + id, parents: ['appDataFolder'], appProperties: { fileId: id, type: type || '', name: name || '' } };
+      
+      // Step 1: Initiate Resumable Upload
+      const initRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + gdriveAccessToken,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': blob.type,
+          'X-Upload-Content-Length': blob.size
+        },
+        body: JSON.stringify(metadata)
+      });
+      
+      if (!initRes.ok) {
+        console.error('Resumable init failed');
+        return;
+      }
+      
+      const location = initRes.headers.get('Location');
+      if (!location) {
+        console.error('No upload location returned');
+        return;
+      }
+      
+      // Step 2: Upload the actual binary data
+      await fetch(location, {
+        method: 'PUT',
+        headers: { 'Content-Length': blob.size },
+        body: blob
+      });
+    } catch (e) { console.error('Upload failed:', e); }
+  },
+  async downloadMedia(id) {
+    if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return null;
+    try {
+      const searchRes = await fetch("https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+      if (!searchRes.ok) return null;
+      const searchData = await searchRes.json();
+      const file = searchData.files && searchData.files[0];
+      if (!file) return null;
+      const contentRes = await fetch("https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+      if (!contentRes.ok) return null;
+      const blob = await contentRes.blob();
+      return { id, blob, type: file.appProperties?.type || 'unknown', name: file.appProperties?.name || '', timestamp: Date.now() };
+    } catch (e) { return null; }
+  }
+};
 const FileDB = {
   db: null,
   init() {
@@ -8410,38 +8535,39 @@ const FileDB = {
       const request = indexedDB.open("PlaneerFileDB", 1);
       request.onupgradeneeded = (e) => {
         const db = e.target.result;
-        if (!db.objectStoreNames.contains("files")) {
-          db.createObjectStore("files", { keyPath: "id" });
-        }
+        if (!db.objectStoreNames.contains("files")) db.createObjectStore("files", { keyPath: "id" });
       };
-      request.onsuccess = (e) => {
-        this.db = e.target.result;
-        resolve();
-      };
-      request.onerror = (e) => {
-        console.error("FileDB init error:", e);
-        reject(e);
-      };
+      request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
+      request.onerror = (e) => { reject(e); };
     });
   },
   async saveFile(blob, type, name) {
     if (!this.db) await this.init();
     const id = 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-    return new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       const tx = this.db.transaction("files", "readwrite");
       tx.objectStore("files").put({ id, blob, type, name, timestamp: Date.now() });
-      tx.oncomplete = () => resolve(id);
+      tx.oncomplete = () => resolve();
       tx.onerror = (e) => reject(e);
     });
+    GDriveMediaSync.uploadMedia(id, blob, type, name);
+    return id;
   },
   async getFile(id) {
     if (!this.db) await this.init();
-    return new Promise((resolve, reject) => {
+    let record = await new Promise((resolve, reject) => {
       const tx = this.db.transaction("files", "readonly");
       const request = tx.objectStore("files").get(id);
       request.onsuccess = () => resolve(request.result);
       request.onerror = (e) => reject(e);
     });
+    if (!record && typeof gdriveAccessToken !== 'undefined' && gdriveAccessToken) {
+       record = await GDriveMediaSync.downloadMedia(id);
+       if (record) {
+         try { const tx = this.db.transaction("files", "readwrite"); tx.objectStore("files").put(record); } catch(e) {}
+       }
+    }
+    return record;
   },
   async deleteFile(id) {
     if (!this.db) await this.init();
@@ -8462,6 +8588,7 @@ const AudioRecorder = {
   speechRecognition: null,
   isRecording: false,
   finalTranscript: '',
+  lastInterim: '',
   onStop: null,
   onProgress: null,
   
@@ -8481,6 +8608,8 @@ const AudioRecorder = {
           } else {
             interim += event.results[i][0].transcript;
           }
+        }
+        this.lastInterim = interim;
         }
         if (this.onProgress) {
           this.onProgress(this.finalTranscript + interim);
@@ -8514,6 +8643,7 @@ const AudioRecorder = {
       this.mediaRecorder = new MediaRecorder(stream, options);
       this.audioChunks = [];
       this.finalTranscript = '';
+      this.lastInterim = '';
       this.onStop = onStopCallback;
       this.onProgress = onProgressCallback;
 
@@ -8704,6 +8834,9 @@ function handleAudioDictateClick(btnId, inputId, draftsArray, containerId, onCha
 
 // Setup dictate buttons for New Record and Todo Modal after DOM loads
 document.addEventListener('DOMContentLoaded', () => {
+  handleVideoRecordClick('btn-video-record', state.diaryDraftImages, 'new-record-previews', () => {
+    renderDiary();
+  });
   handleAudioDictateClick(
     'btn-dictate-record', 
     'new-record-text', 
