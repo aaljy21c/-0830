@@ -3271,7 +3271,7 @@ function setupEventListeners() {
 
       const statusSpan = document.getElementById('new-record-save-status');
       if (statusSpan) {
-        statusSpan.textContent = '사진 압축 중...';
+        statusSpan.textContent = '파일 처리 중... (대용량은 시간이 걸립니다)';
         statusSpan.style.opacity = '1';
       }
 
@@ -3580,7 +3580,7 @@ function setupEventListeners() {
       
       const statusSpan = document.getElementById('todo-edit-modal-photo-status');
       if (statusSpan) {
-        statusSpan.textContent = '사진 압축 중...';
+        statusSpan.textContent = '파일 처리 중... (대용량은 시간이 걸립니다)';
         statusSpan.style.opacity = '1';
       }
       
@@ -5268,6 +5268,11 @@ function renderDiary() {
           const files = Array.from(e.target.files);
           if (files.length === 0) return;
           
+          const statusSpan = e.target.parentElement.nextElementSibling;
+          if (statusSpan) {
+            statusSpan.textContent = '파일 처리 중... (대용량은 시간이 걸립니다)';
+            statusSpan.style.opacity = '1';
+          }
           let processed = 0;
           files.forEach(file => {
             if (file.type.startsWith('video/') || file.type === 'application/pdf') {
@@ -5349,7 +5354,7 @@ function renderDiary() {
         drawingContainer.style.display = 'none';
         card.appendChild(drawingContainer);
 
-        drawingLabel.addEventListener('click', () => {
+        const openDiaryDrawingEditor = () => {
           openFullscreenDrawing(state.diaryDraftDrawing || [], (data, isClosing) => {
             state.diaryDraftDrawing = data;
             if (isClosing) {
@@ -5364,7 +5369,13 @@ function renderDiary() {
               }
             }
           });
-        });
+        };
+
+        drawingLabel.addEventListener('click', openDiaryDrawingEditor);
+        
+        drawingContainer.style.cursor = 'pointer';
+        drawingContainer.title = '클릭하여 곧바로 그림 수정하기';
+        drawingContainer.addEventListener('click', openDiaryDrawingEditor);
         
         // Initial thumbnail render
         if (hasDrawingData(state.diaryDraftDrawing)) {
