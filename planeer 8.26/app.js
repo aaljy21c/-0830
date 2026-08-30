@@ -1165,32 +1165,33 @@ function scheduleGDriveTokenRefresh(expiryTime) {
 
 // Silently refresh the Google Drive access token using promptless GIS client
 function autoRefreshGDriveToken() {
-  let clientId = (state.gdriveClientId || '').trim();
-  if (!clientId) return;
-  if (!clientId.endsWith('.apps.googleusercontent.com')) {
-    clientId += '.apps.googleusercontent.com';
-  }
+  return new Promise((resolve) => {
+    let clientId = (state.gdriveClientId || '').trim();
+    if (!clientId) { resolve(null); return; }
+    if (!clientId.endsWith('.apps.googleusercontent.com')) {
+      clientId += '.apps.googleusercontent.com';
+    }
 
-  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-    console.warn('Google Identity Services script not ready for silent refresh.');
-    return;
-  }
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+      console.warn('Google Identity Services script not ready for silent refresh.');
+      resolve(null); return;
+    }
 
-  const gdriveBackupBtn = document.getElementById('btn-gdrive-backup');
-  const gdriveRestoreBtn = document.getElementById('btn-gdrive-restore');
-  const gdriveLogoutBtn = document.getElementById('btn-gdrive-logout');
+    const gdriveBackupBtn = document.getElementById('btn-gdrive-backup');
+    const gdriveRestoreBtn = document.getElementById('btn-gdrive-restore');
+    const gdriveLogoutBtn = document.getElementById('btn-gdrive-logout');
 
-  try {
-    gdriveTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/drive.appdata',
-      callback: (tokenResponse) => {
-        if (tokenResponse.error !== undefined) {
-          console.error('Silent Google Drive token refresh failed:', tokenResponse.error);
-          return;
-        }
-        gdriveAccessToken = tokenResponse.access_token;
-        const expiryTime = Date.now() + (tokenResponse.expires_in * 1000);
+    try {
+      gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive.appdata',
+        callback: (tokenResponse) => {
+          if (tokenResponse.error !== undefined) {
+            console.error('Silent Google Drive token refresh failed:', tokenResponse.error);
+            resolve(null); return;
+          }
+          gdriveAccessToken = tokenResponse.access_token;
+          const expiryTime = Date.now() + (tokenResponse.expires_in * 1000);
         localStorage.setItem('neon_planner_gdrive_access_token', gdriveAccessToken);
         localStorage.setItem('neon_planner_gdrive_token_expiry', expiryTime);
 
@@ -1211,6 +1212,7 @@ function autoRefreshGDriveToken() {
         scheduleGDriveTokenRefresh(expiryTime);
         if (gdrivePollInterval) clearInterval(gdrivePollInterval);
         gdrivePollInterval = setInterval(autoSyncWithDrive, 3000);
+        resolve(gdriveAccessToken);
       }
     });
 
@@ -1218,7 +1220,9 @@ function autoRefreshGDriveToken() {
     gdriveTokenClient.requestAccessToken({ prompt: '' });
   } catch (e) {
     console.error('Silent token refresh initialization failed:', e);
+    resolve(null);
   }
+  });
 }
 
 // Background Auto-sync to Google Drive (if logged in and connected)
@@ -4389,7 +4393,7 @@ function openTodoEditModal(todoId) {
     // Update thumbnail
     const openTodoDrawingEditor = () => {
       openFullscreenDrawing(todoEditDraftDrawing, (data, isClosing) => {
-        todoEditDraftDrawing = data;
+        todoEditDraftDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
         if (isClosing) updateThumb();
       });
     };
@@ -5381,14 +5385,14 @@ function renderDiary() {
 
         const openDiaryDrawingEditor = () => {
           openFullscreenDrawing(state.diaryDraftDrawing || [], (data, isClosing) => {
-            state.diaryDraftDrawing = data;
+            state.diaryDraftDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
             if (isClosing) {
               // Update thumbnail
               drawingContainer.innerHTML = '';
-              if (data && data.length > 0) {
+              if (state.diaryDraftDrawing && state.diaryDraftDrawing.length > 0) {
                 drawingContainer.style.display = 'block';
                 drawingContainer.classList.remove('hidden');
-                new NeonDrawingBoard(drawingContainer, { initialData: data, readOnly: true });
+                new NeonDrawingBoard(drawingContainer, { initialData: state.diaryDraftDrawing, readOnly: true });
                 deleteDrawingBtn.style.display = 'block';
               } else {
                 drawingContainer.style.display = 'none';
@@ -5682,7 +5686,7 @@ function renderDiary() {
       
       const openNewRecordDrawingEditor = () => {
         openFullscreenDrawing(state.diaryDraftDrawing || [], (data, isClosing) => {
-          state.diaryDraftDrawing = data;
+          state.diaryDraftDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
           if (isClosing) updateNewRecordThumb();
         });
       };
@@ -8705,7 +8709,7 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
 // ====== FILE DB (IndexedDB) ======
 const GDriveMediaSync = {
   _pendingDownloads: {},
-  async uploadMedia(id, blob, type, name) {
+  async uploadMedia(id, blob, type, name, isRetry = false) {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return;
     try {
       const metadata = { name: 'neon_media_' + id, parents: ['appDataFolder'], appProperties: { fileId: id, type: type || '', name: name || '' } };
@@ -8724,6 +8728,12 @@ const GDriveMediaSync = {
       
       if (!initRes.ok) {
         console.error('Resumable init failed');
+        if (initRes.status === 401 && !isRetry) {
+          if (typeof autoRefreshGDriveToken === 'function') {
+            await autoRefreshGDriveToken();
+            return this.uploadMedia(id, blob, type, name, true);
+          }
+        }
         return;
       }
       
@@ -8741,7 +8751,7 @@ const GDriveMediaSync = {
       });
     } catch (e) { console.error('Upload failed:', e); }
   },
-  async downloadMedia(id) {
+  async downloadMedia(id, isRetry = false) {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return null;
     
     // 이미 같은 파일의 다운로드가 진행 중이면 해당 Promise를 반환하여 중복 요청 방지
@@ -8754,7 +8764,10 @@ const GDriveMediaSync = {
         const searchRes = await fetch("https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
         
         if (searchRes.status === 401) {
-          if (typeof autoRefreshGDriveToken === 'function') autoRefreshGDriveToken();
+          if (!isRetry && typeof autoRefreshGDriveToken === 'function') {
+            await autoRefreshGDriveToken();
+            return this.downloadMedia(id, true);
+          }
           return null;
         }
         if (!searchRes.ok) return null;
@@ -8766,7 +8779,10 @@ const GDriveMediaSync = {
         const contentRes = await fetch("https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
         
         if (contentRes.status === 401) {
-          if (typeof autoRefreshGDriveToken === 'function') autoRefreshGDriveToken();
+          if (!isRetry && typeof autoRefreshGDriveToken === 'function') {
+            await autoRefreshGDriveToken();
+            return this.downloadMedia(id, true);
+          }
           return null;
         }
         if (!contentRes.ok) return null;

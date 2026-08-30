@@ -1012,6 +1012,9 @@ class NeonDrawingBoard {
     this.undoStack.push(JSON.parse(JSON.stringify(this.strokes)));
     if (this.undoStack.length > 50) this.undoStack.shift();
     this.redoStack = [];
+    if (this.isMultiPage && this.currentPageIndex >= 0) {
+      this._pages[this.currentPageIndex]._strokes = JSON.parse(JSON.stringify(this.strokes));
+    }
     if (this.onChange) this.onChange(this.getData());
   }
 
