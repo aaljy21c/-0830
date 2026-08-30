@@ -8424,44 +8424,117 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
     });
     container.appendChild(img);
   } else if (mediaObj.type === 'video' || mediaObj.type === 'pdf') {
+    
+    // ===== VIDEO THUMBNAIL: use poster frame if available (fast, no FileDB needed) =====
+    if (mediaObj.type === 'video' && mediaObj.poster && isEditMode) {
+      // Show poster image as thumbnail immediately
+      const img = document.createElement('img');
+      img.src = mediaObj.poster;
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'cover';
+      img.style.pointerEvents = 'none';
+      container.appendChild(img);
+
+      // Play icon overlay
+      const playBadge = document.createElement('div');
+      playBadge.innerHTML = '▶';
+      playBadge.style.cssText = 'position:absolute; bottom:4px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); color:white; font-size:14px; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; pointer-events:none;';
+      container.appendChild(playBadge);
+      return container; // Done — no async load needed for thumbnails
+    }
+
+    // ===== VIDEO WITHOUT POSTER / PDF: async load from FileDB =====
     const loading = document.createElement('div');
-    loading.textContent = '...';
-    loading.style.color = '#fff';
+    if (mediaObj.type === 'video') {
+      // Show video icon placeholder while loading
+      loading.innerHTML = '🎬';
+      loading.style.cssText = 'font-size:28px; opacity:0.7;';
+    } else {
+      loading.innerHTML = '📄';
+      loading.style.cssText = 'font-size:24px; opacity:0.7; color:#fff;';
+    }
     container.appendChild(loading);
 
     FileDB.getFile(mediaObj.fileId).then(fileRecord => {
-      container.removeChild(loading);
+      if (container.contains(loading)) container.removeChild(loading);
       if (!fileRecord || !fileRecord.blob) {
         const err = document.createElement('div');
-        err.textContent = '❌';
+        err.innerHTML = '❌';
+        err.style.cssText = 'font-size:22px; opacity:0.7;';
         container.appendChild(err);
         return;
       }
       
       const blobUrl = URL.createObjectURL(fileRecord.blob);
       if (mediaObj.type === 'video') {
-        const vid = document.createElement('video');
-        vid.src = blobUrl;
-        vid.controls = true;
-        vid.style.width = '100%';
-        vid.style.height = '100%';
-        vid.style.objectFit = 'cover';
         if (isEditMode) {
-           vid.controls = false;
+          // In thumbnail/edit mode: capture first frame from blob and show as image
+          const tempVid = document.createElement('video');
+          tempVid.src = blobUrl;
+          tempVid.muted = true;
+          tempVid.playsInline = true;
+          tempVid.style.display = 'none';
+          tempVid.addEventListener('loadeddata', () => {
+            tempVid.currentTime = Math.min(0.5, tempVid.duration || 0);
+          });
+          tempVid.addEventListener('seeked', () => {
+            try {
+              const cvs = document.createElement('canvas');
+              cvs.width = tempVid.videoWidth || 120;
+              cvs.height = tempVid.videoHeight || 80;
+              cvs.getContext('2d').drawImage(tempVid, 0, 0, cvs.width, cvs.height);
+              const posterUrl = cvs.toDataURL('image/jpeg', 0.7);
+
+              const img = document.createElement('img');
+              img.src = posterUrl;
+              img.style.width = '100%';
+              img.style.height = '100%';
+              img.style.objectFit = 'cover';
+              img.style.pointerEvents = 'none';
+              container.appendChild(img);
+
+              const playBadge = document.createElement('div');
+              playBadge.innerHTML = '▶';
+              playBadge.style.cssText = 'position:absolute; bottom:4px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); color:white; font-size:14px; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; pointer-events:none;';
+              container.appendChild(playBadge);
+            } catch(e) {
+              // fallback: show video element
+              const vid = document.createElement('video');
+              vid.src = blobUrl;
+              vid.controls = false;
+              vid.style.width = '100%';
+              vid.style.height = '100%';
+              vid.style.objectFit = 'cover';
+              container.appendChild(vid);
+            }
+          });
+          tempVid.addEventListener('error', () => {
+            const vid = document.createElement('video');
+            vid.src = blobUrl;
+            vid.controls = false;
+            vid.style.width = '100%';
+            vid.style.height = '100%';
+            vid.style.objectFit = 'cover';
+            container.appendChild(vid);
+          });
+          document.body.appendChild(tempVid); // needs to be in DOM to seek
+          setTimeout(() => { try { document.body.removeChild(tempVid); } catch(e) {} }, 5000);
+        } else {
+          // Full view mode: show actual video player
+          const vid = document.createElement('video');
+          vid.src = blobUrl;
+          vid.controls = true;
+          vid.style.width = '100%';
+          vid.style.height = '100%';
+          vid.style.objectFit = 'cover';
+          container.appendChild(vid);
         }
-        container.appendChild(vid);
       } else if (mediaObj.type === 'pdf') {
         const pdfBtn = document.createElement('button');
         pdfBtn.type = 'button';
-        pdfBtn.innerHTML = '📄 PDF';
-        pdfBtn.style.padding = '8px';
-        pdfBtn.style.background = '#3b82f6';
-        pdfBtn.style.color = '#fff';
-        pdfBtn.style.border = 'none';
-        pdfBtn.style.borderRadius = '4px';
-        pdfBtn.style.cursor = 'pointer';
-        pdfBtn.style.width = '100%';
-        pdfBtn.style.height = '100%';
+        pdfBtn.innerHTML = '📄 PDF 보기';
+        pdfBtn.style.cssText = 'padding:8px 12px; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; width:100%; height:100%;';
         pdfBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           window.open(blobUrl, '_blank');
@@ -8469,7 +8542,11 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
         container.appendChild(pdfBtn);
       }
     }).catch(e => {
-       console.error("Failed to load file:", e);
+       console.error('Failed to load file:', e);
+       if (container.contains(loading)) container.removeChild(loading);
+       const err = document.createElement('div');
+       err.innerHTML = '❌';
+       container.appendChild(err);
     });
   }
   return container;
@@ -8857,9 +8934,25 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.style.overflow = 'hidden'; // prevent bg scroll
     
     container.innerHTML = '';
+
+    // 스로틀링: 스트로크마다 저장하되 300ms 이내 연속 호출은 마지막 한 번만 실행
+    let autoSaveTimer = null;
+    const throttledSave = (data) => {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(() => {
+        if (onSaveCallback) onSaveCallback(data);
+      }, 300);
+    };
+
     window.currentDrawingBoard = new NeonDrawingBoard(container, {
       initialData: initialData || [],
+      onChange: (data) => {
+        // 그림을 그릴 때마다 실시간 자동 저장 (스로틀링 적용)
+        throttledSave(data);
+      },
       onClose: (data) => {
+        // 닫기 버튼 클릭 시: 진행 중인 자동저장 취소 후 즉시 저장
+        clearTimeout(autoSaveTimer);
         if (onSaveCallback) onSaveCallback(data);
         window.closeFullscreenDrawing();
       }
@@ -8876,3 +8969,4 @@ document.addEventListener('DOMContentLoaded', () => {
     window.currentDrawingBoard = null;
   };
 });
+
