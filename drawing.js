@@ -745,7 +745,11 @@ class NeonDrawingBoard {
       return;
     }
 
-    this.canvas.setPointerCapture(e.pointerId);
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch (err) {
+      console.warn('Pointer capture failed:', err);
+    }
 
     const pos = this.getPointerPos(e);
     const activeTool = this.isTempEraser ? 'eraser' : this.currentTool;
@@ -1389,7 +1393,7 @@ class NeonDrawingBoard {
 
   drawStroke(stroke, isHighlight = false) {
     if (stroke.isBg) return;
-    if (stroke.points.length < 2) return;
+    if (!stroke.points || stroke.points.length === 0) return;
 
     this.ctx.save();
     this.ctx.beginPath();
@@ -1406,9 +1410,15 @@ class NeonDrawingBoard {
       this.ctx.globalCompositeOperation = 'source-over';
     }
 
-    if (stroke.isShape) {
+    if (stroke.points.length === 1) {
+      // Draw a dot
+      this.ctx.fillStyle = stroke.color;
+      this.ctx.arc(stroke.points[0].x, stroke.points[0].y, stroke.size / 2, 0, Math.PI * 2);
+      this.ctx.fill();
+    } else if (stroke.isShape) {
       this.ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
       this.ctx.lineTo(stroke.points[1].x, stroke.points[1].y);
+      this.ctx.stroke();
     } else {
       this.ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
       for (let i = 1; i < stroke.points.length - 1; i++) {
@@ -1418,9 +1428,9 @@ class NeonDrawingBoard {
       }
       const last = stroke.points[stroke.points.length - 1];
       this.ctx.lineTo(last.x, last.y);
+      this.ctx.stroke();
     }
 
-    this.ctx.stroke();
     this.ctx.restore();
   }
 }

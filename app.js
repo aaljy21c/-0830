@@ -4384,6 +4384,8 @@ function openTodoEditModal(todoId) {
     const newBtn = btnToggleTodoDrawing.cloneNode(true);
     btnToggleTodoDrawing.parentNode.replaceChild(newBtn, btnToggleTodoDrawing);
     
+    const deleteBtn = document.getElementById('btn-delete-todo-modal-drawing');
+    
     // Update thumbnail
     const openTodoDrawingEditor = () => {
       openFullscreenDrawing(todoEditDraftDrawing, (data, isClosing) => {
@@ -4400,11 +4402,23 @@ function openTodoEditModal(todoId) {
         container.style.display = 'block';
         container.classList.remove('hidden');
         new NeonDrawingBoard(container, { initialData: todoEditDraftDrawing, readOnly: true });
+        if (deleteBtn) deleteBtn.style.display = 'block';
       } else {
         container.style.display = 'none';
+        if (deleteBtn) deleteBtn.style.display = 'none';
       }
     };
     updateThumb();
+
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm('첨부된 그림을 지우시겠습니까?')) {
+          todoEditDraftDrawing = [];
+          updateThumb();
+        }
+      });
+    }
 
     newBtn.addEventListener('click', openTodoDrawingEditor);
     const drawContainer = document.getElementById('todo-edit-modal-drawing-container');
@@ -5336,18 +5350,29 @@ function renderDiary() {
         card.appendChild(previewsContainer);
 
         // Drawing Board for Edit Mode
+        const drawingHeader = document.createElement('div');
+        drawingHeader.style.display = 'flex';
+        drawingHeader.style.justifyContent = 'space-between';
+        drawingHeader.style.alignItems = 'center';
+
         const drawingLabel = document.createElement('button');
         drawingLabel.type = 'button';
         drawingLabel.className = 'diary-photo-upload-label';
         drawingLabel.style.marginTop = '10px';
-        drawingLabel.style.display = 'block';
-        drawingLabel.style.width = '100%';
         drawingLabel.style.textAlign = 'left';
         drawingLabel.style.background = 'transparent';
         drawingLabel.style.border = 'none';
         drawingLabel.style.cursor = 'pointer';
         drawingLabel.innerHTML = '<span class="upload-icon">🎨</span> 손그림 그리기 (열기/닫기)';
-        card.appendChild(drawingLabel);
+        
+        const deleteDrawingBtn = document.createElement('button');
+        deleteDrawingBtn.type = 'button';
+        deleteDrawingBtn.innerHTML = '🗑️ 삭제';
+        deleteDrawingBtn.style.cssText = 'display:none; margin-top:10px; padding:6px 12px; background:rgba(239, 68, 68, 0.1); color:#ef4444; border:1px solid #ef4444; border-radius:6px; cursor:pointer; font-size:0.8rem;';
+        
+        drawingHeader.appendChild(drawingLabel);
+        drawingHeader.appendChild(deleteDrawingBtn);
+        card.appendChild(drawingHeader);
 
         const drawingContainer = document.createElement('div');
         drawingContainer.className = 'diary-drawing-container hidden';
@@ -5364,14 +5389,26 @@ function renderDiary() {
                 drawingContainer.style.display = 'block';
                 drawingContainer.classList.remove('hidden');
                 new NeonDrawingBoard(drawingContainer, { initialData: data, readOnly: true });
+                deleteDrawingBtn.style.display = 'block';
               } else {
                 drawingContainer.style.display = 'none';
+                deleteDrawingBtn.style.display = 'none';
               }
             }
           });
         };
 
         drawingLabel.addEventListener('click', openDiaryDrawingEditor);
+        
+        deleteDrawingBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm('첨부된 그림을 지우시겠습니까?')) {
+            state.diaryDraftDrawing = [];
+            drawingContainer.innerHTML = '';
+            drawingContainer.style.display = 'none';
+            deleteDrawingBtn.style.display = 'none';
+          }
+        });
         
         drawingContainer.style.cursor = 'pointer';
         drawingContainer.title = '클릭하여 곧바로 그림 수정하기';
@@ -5382,6 +5419,7 @@ function renderDiary() {
           drawingContainer.style.display = 'block';
           drawingContainer.classList.remove('hidden');
           new NeonDrawingBoard(drawingContainer, { initialData: state.diaryDraftDrawing, readOnly: true });
+          deleteDrawingBtn.style.display = 'block';
         }
 
         // Actions row
@@ -6164,6 +6202,9 @@ function showLightboxImage(idx) {
   lightboxImg.classList.add('lightbox-image-transition');
 
   
+  let isVideo = false;
+  let isPdf = false;
+  
   if (currentImg && currentImg.fileId) {
     lightboxImg.style.display = 'none';
     let mediaContainer = document.getElementById('lightbox-media-container');
@@ -6174,26 +6215,63 @@ function showLightboxImage(idx) {
       mediaContainer.style.display = 'flex';
       mediaContainer.style.alignItems = 'center';
       mediaContainer.style.justifyContent = 'center';
+      mediaContainer.style.flexDirection = 'column';
       lightboxImg.parentNode.insertBefore(mediaContainer, lightboxImg);
     }
     mediaContainer.innerHTML = '';
     mediaContainer.style.display = 'flex';
     if (currentImg.type === 'video') {
+      isVideo = true;
+      const vidWrapper = document.createElement('div');
+      vidWrapper.style.position = 'relative';
+      vidWrapper.style.width = '100%';
+      vidWrapper.style.height = '100%';
+      vidWrapper.style.display = 'flex';
+      vidWrapper.style.flexDirection = 'column';
+      vidWrapper.style.alignItems = 'center';
+      vidWrapper.style.justifyContent = 'center';
+
       const vid = document.createElement('video');
       vid.style.maxWidth = '100%';
-      vid.style.maxHeight = '100%';
+      vid.style.maxHeight = '90%';
       vid.controls = true;
       vid.autoplay = true;
+      
+      const hint = document.createElement('div');
+      hint.style.color = '#fff';
+      hint.style.fontSize = '0.85rem';
+      hint.style.marginTop = '10px';
+      hint.style.opacity = '0.7';
+      hint.innerHTML = '⚠️ 검은 화면만 나올 경우, 브라우저가 지원하지 않는 형식입니다.<br>하단의 <b>[원본 영상 다운로드]</b>를 눌러 PC에서 재생하세요.';
+      hint.style.textAlign = 'center';
+
       FileDB.getFile(currentImg.fileId).then(f => {
-        if (f) vid.src = URL.createObjectURL(f.blob);
+        if (f) {
+          const blobUrl = URL.createObjectURL(f.blob);
+          vid.src = blobUrl;
+          if (downloadLink) {
+            downloadLink.href = blobUrl;
+            downloadLink.download = currentImg.name || `video-${state.selectedDate || 'date'}.mp4`;
+          }
+        }
       });
-      mediaContainer.appendChild(vid);
+      vidWrapper.appendChild(vid);
+      vidWrapper.appendChild(hint);
+      mediaContainer.appendChild(vidWrapper);
     } else if (currentImg.type === 'pdf') {
+       isPdf = true;
        const iframe = document.createElement('iframe');
        iframe.style.width = '100%';
        iframe.style.height = '100%';
        FileDB.getFile(currentImg.fileId).then(f => {
-         if (f) iframe.src = URL.createObjectURL(f.blob);
+         if (f) {
+           const blobUrl = URL.createObjectURL(f.blob);
+           iframe.src = blobUrl;
+           if (downloadLink) {
+             downloadLink.href = blobUrl;
+             downloadLink.download = currentImg.name || `document-${state.selectedDate || 'date'}.pdf`;
+           }
+         }
        });
        mediaContainer.appendChild(iframe);
     }
@@ -6205,10 +6283,16 @@ function showLightboxImage(idx) {
     lightboxImg.style = getImageStyle(currentImg);
   }
 
-
   if (downloadLink) {
-    downloadLink.href = src;
-    downloadLink.download = `record-photo-${state.selectedDate || 'date'}-${lightboxIndex + 1}.jpg`;
+    if (isVideo) {
+      downloadLink.innerHTML = '📥 원본 영상 다운로드';
+    } else if (isPdf) {
+      downloadLink.innerHTML = '📥 문서 다운로드';
+    } else {
+      downloadLink.href = src;
+      downloadLink.download = `record-photo-${state.selectedDate || 'date'}-${lightboxIndex + 1}.jpg`;
+      downloadLink.innerHTML = '📥 사진 다운로드';
+    }
   }
 
   if (counterEl) {
