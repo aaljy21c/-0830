@@ -3234,9 +3234,9 @@ function setupEventListeners() {
     btnSaveNewRecord.addEventListener('click', () => {
       const dateKey = state.selectedDate;
       const textVal = newRecordText.value.trim();
-      const imagesVal = [...state.diaryDraftImages];
-      const drawingVal = [...(state.diaryDraftDrawing || [])];
-      const audioVal = [...(state.diaryDraftAudio || [])];
+      const imagesVal = state.diaryDraftImages ? JSON.parse(JSON.stringify(state.diaryDraftImages)) : [];
+      const drawingVal = state.diaryDraftDrawing ? JSON.parse(JSON.stringify(state.diaryDraftDrawing)) : [];
+      const audioVal = state.diaryDraftAudio ? JSON.parse(JSON.stringify(state.diaryDraftAudio)) : [];
 
       if (!textVal && imagesVal.length === 0 && drawingVal.length === 0 && audioVal.length === 0) {
         alert('내용이나 사진, 그림, 음성 중 하나를 입력해 주세요.');
@@ -3498,9 +3498,9 @@ function setupEventListeners() {
 
       const importantInput = document.getElementById('todo-edit-modal-important');
       const isImportantVal = importantInput ? importantInput.checked : Boolean(todo.isImportant);
-      const newImages = [...todoEditDraftImages];
-      const newDrawing = [...todoEditDraftDrawing];
-      const newAudio = [...todoEditDraftAudio];
+      const newImages = todoEditDraftImages ? JSON.parse(JSON.stringify(todoEditDraftImages)) : [];
+      const newDrawing = todoEditDraftDrawing ? JSON.parse(JSON.stringify(todoEditDraftDrawing)) : [];
+      const newAudio = todoEditDraftAudio ? JSON.parse(JSON.stringify(todoEditDraftAudio)) : [];
 
       const todo = state.todos[dateKey].find(t => t.id === editingTodoId);
       if (todo) {
@@ -5391,9 +5391,9 @@ function renderDiary() {
         saveBtn.innerHTML = '💾 저장완료';
         saveBtn.addEventListener('click', () => {
           record.text = textarea.value;
-          record.images = [...state.diaryDraftImages];
-          record.drawing = [...(state.diaryDraftDrawing || [])];
-          record.audio = [...(state.diaryDraftAudio || [])];
+          record.images = state.diaryDraftImages ? JSON.parse(JSON.stringify(state.diaryDraftImages)) : [];
+          record.drawing = state.diaryDraftDrawing ? JSON.parse(JSON.stringify(state.diaryDraftDrawing)) : [];
+          record.audio = state.diaryDraftAudio ? JSON.parse(JSON.stringify(state.diaryDraftAudio)) : [];
           saveDiaries();
           state.editingRecordId = null;
           state.diaryDraftImages = [];
@@ -6134,7 +6134,6 @@ function showLightboxImage(idx) {
       mediaContainer = document.createElement('div');
       mediaContainer.id = 'lightbox-media-container';
       mediaContainer.style.width = '100%';
-      mediaContainer.style.height = '100%';
       mediaContainer.style.display = 'flex';
       mediaContainer.style.alignItems = 'center';
       mediaContainer.style.justifyContent = 'center';
