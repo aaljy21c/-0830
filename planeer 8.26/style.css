@@ -3386,7 +3386,7 @@ body.light-theme .diary-textarea {
 .lightbox-close {
   position: absolute;
   top: -40px;
-  right: 0;
+  left: 0;
   background: none;
   border: none;
   color: white;
@@ -3749,7 +3749,7 @@ body.light-theme .accent-preset-btn.active {
   .lightbox-close {
     position: fixed;
     top: 15px;
-    right: 15px;
+    left: 15px;
     background: rgba(0, 0, 0, 0.5);
     border-radius: 50%;
     width: 44px;

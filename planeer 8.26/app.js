@@ -4385,6 +4385,13 @@ function openTodoEditModal(todoId) {
     btnToggleTodoDrawing.parentNode.replaceChild(newBtn, btnToggleTodoDrawing);
     
     // Update thumbnail
+    const openTodoDrawingEditor = () => {
+      openFullscreenDrawing(todoEditDraftDrawing, (data) => {
+        todoEditDraftDrawing = data;
+        updateThumb();
+      });
+    };
+
     const updateThumb = () => {
       const container = document.getElementById('todo-edit-modal-drawing-container');
       if (!container) return;
@@ -4399,12 +4406,13 @@ function openTodoEditModal(todoId) {
     };
     updateThumb();
 
-    newBtn.addEventListener('click', () => {
-      openFullscreenDrawing(todoEditDraftDrawing, (data) => {
-        todoEditDraftDrawing = data;
-        updateThumb();
-      });
-    });
+    newBtn.addEventListener('click', openTodoDrawingEditor);
+    const drawContainer = document.getElementById('todo-edit-modal-drawing-container');
+    if (drawContainer) {
+      drawContainer.style.cursor = 'pointer';
+      drawContainer.title = '클릭하여 곧바로 그림 수정하기';
+      drawContainer.addEventListener('click', openTodoDrawingEditor);
+    }
   }
   // Setup Todo audio dictate button
   const todoDictateBtn = document.getElementById('btn-dictate-todo-modal');
@@ -4440,19 +4448,11 @@ function renderTodoEditPreviews() {
     }
     const thumb = document.createElement('div');
     thumb.className = 'record-draft-thumb';
-    const imgWrapper = document.createElement('div');
-    imgWrapper.className = 'thumb-img-wrapper';
-    renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(todoEditDraftImages, idx, true));
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'delete-thumb-btn';
-    delBtn.innerHTML = '&times;';
-    delBtn.addEventListener('click', () => {
+    const mediaContainer = createMediaElementAsync(imgSrc, true, () => openLightbox(todoEditDraftImages, idx, true), () => {
       todoEditDraftImages.splice(idx, 1);
       renderTodoEditPreviews();
     });
-    imgWrapper.appendChild(delBtn);
-    thumb.appendChild(imgWrapper);
+    thumb.appendChild(mediaContainer);
     previewsContainer.appendChild(thumb);
   });
   
@@ -5276,11 +5276,15 @@ function renderDiary() {
           let processed = 0;
           files.forEach(file => {
             if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(id => {
-            todoEditDraftImages.push({ fileId: id, type: file.type.startsWith('video/') ? 'video' : 'pdf', name: file.name });
+          FileDB.saveFile(file, file.type, file.name).then(async id => {
+            let posterDataUrl = null;
+            if (file.type.startsWith('video/')) {
+              posterDataUrl = await captureVideoThumbnail(file);
+            }
+            state.diaryDraftImages.push({ fileId: id, type: file.type.startsWith('video/') ? 'video' : 'pdf', name: file.name, poster: posterDataUrl });
             processed++;
-            if (processed === files.length) { renderTodoEditPreviews(); if (statusSpan) statusSpan.textContent = '파일 추가 완료'; }
-          });
+            if (processed === files.length) { renderDiary(); if (statusSpan) statusSpan.textContent = '파일 추가 완료'; }
+          }).catch(err => console.error(err));
         } else {
           compressAndSaveImage(file, (dataUrl) => {
               state.diaryDraftImages.push({
@@ -5294,10 +5298,11 @@ function renderDiary() {
                 renderDiary();
               }
             });
-          });
+          }
         });
+      });
 
-        label.appendChild(fileInput);
+      label.appendChild(fileInput);
         label.appendChild(document.createTextNode('📷 사진 선택 (여러장 가능)'));
         mediaRow.appendChild(label);
 
@@ -5320,21 +5325,11 @@ function renderDiary() {
           const thumb = document.createElement('div');
           thumb.className = 'record-draft-thumb';
           
-          const imgWrapper = document.createElement('div');
-          imgWrapper.className = 'thumb-img-wrapper';
-
-          renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(state.diaryDraftImages, idx, true));
-
-          const delBtn = document.createElement('button');
-          delBtn.type = 'button';
-          delBtn.className = 'delete-thumb-btn';
-          delBtn.innerHTML = '&times;';
-          delBtn.addEventListener('click', () => {
+          const mediaContainer = createMediaElementAsync(imgSrc, true, () => openLightbox(state.diaryDraftImages, idx, true), () => {
             state.diaryDraftImages.splice(idx, 1);
             renderDiary();
           });
-          imgWrapper.appendChild(delBtn);
-          thumb.appendChild(imgWrapper);
+          thumb.appendChild(mediaContainer);
 
           previewsContainer.appendChild(thumb);
         });
@@ -5609,21 +5604,11 @@ function renderDiary() {
         const thumb = document.createElement('div');
         thumb.className = 'record-draft-thumb';
         
-        const imgWrapper = document.createElement('div');
-        imgWrapper.className = 'thumb-img-wrapper';
-
-        renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(state.diaryDraftImages, idx, true));
-
-        const delBtn = document.createElement('button');
-        delBtn.type = 'button';
-        delBtn.className = 'delete-thumb-btn';
-        delBtn.innerHTML = '&times;';
-        delBtn.addEventListener('click', () => {
+        const mediaContainer = createMediaElementAsync(imgSrc, true, () => openLightbox(state.diaryDraftImages, idx, true), () => {
           state.diaryDraftImages.splice(idx, 1);
           renderDiary();
         });
-        imgWrapper.appendChild(delBtn);
-        thumb.appendChild(imgWrapper);
+        thumb.appendChild(mediaContainer);
 
         creatorPreviews.appendChild(thumb);
       });
@@ -5648,12 +5633,20 @@ function renderDiary() {
     if (btnToggleNewRecordDrawing) {
       const newBtn = btnToggleNewRecordDrawing.cloneNode(true);
       btnToggleNewRecordDrawing.parentNode.replaceChild(newBtn, btnToggleNewRecordDrawing);
-      newBtn.addEventListener('click', () => {
+      
+      const openNewRecordDrawingEditor = () => {
         openFullscreenDrawing(state.diaryDraftDrawing || [], (data) => {
           state.diaryDraftDrawing = data;
           updateNewRecordThumb();
         });
-      });
+      };
+      newBtn.addEventListener('click', openNewRecordDrawingEditor);
+      const drawContainer = document.getElementById('new-record-drawing-container');
+      if (drawContainer) {
+        drawContainer.style.cursor = 'pointer';
+        drawContainer.title = '클릭하여 곧바로 그림 수정하기';
+        drawContainer.addEventListener('click', openNewRecordDrawingEditor);
+      }
     }
   } else {
     newRecordCreator.classList.add('hidden');
@@ -5976,14 +5969,8 @@ function renderTimeline() {
             const imgDiv = document.createElement('div');
             imgDiv.className = 'timeline-diary-images';
             record.images.forEach((imgSrc, idx) => {
-              const img = document.createElement('img');
-              img.className = 'timeline-diary-img';
-              img.src = typeof imgSrc === 'string' ? imgSrc : imgSrc.src;
-              img.style = getImageStyle(imgSrc);
-              img.addEventListener('click', () => {
-                openLightbox(record.images, idx);
-              });
-              imgDiv.appendChild(img);
+              const mediaContainer = createMediaElementAsync(imgSrc, false, () => openLightbox(record.images, idx));
+              imgDiv.appendChild(mediaContainer);
             });
             diaryCard.appendChild(imgDiv);
           }
@@ -8733,7 +8720,6 @@ const AudioRecorder = {
           }
         }
         this.lastInterim = interim;
-        }
         if (this.onProgress) {
           this.onProgress(this.finalTranscript + interim);
         }
@@ -8756,11 +8742,15 @@ const AudioRecorder = {
         } 
       });
       
-      const options = { audioBitsPerSecond: 128000 };
+      let options = { audioBitsPerSecond: 128000 };
       if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
         options.mimeType = 'audio/webm;codecs=opus';
       } else if (MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a.40.2')) {
         options.mimeType = 'audio/mp4;codecs=mp4a.40.2';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        options.mimeType = 'audio/mp4';
+      } else {
+        options = undefined;
       }
       
       this.mediaRecorder = new MediaRecorder(stream, options);
@@ -8777,7 +8767,8 @@ const AudioRecorder = {
       };
 
       this.mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+        const mimeType = this.mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(this.audioChunks, { type: mimeType });
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = () => {

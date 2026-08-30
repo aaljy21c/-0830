@@ -915,6 +915,7 @@ class NeonDrawingBoard {
     let erased = false;
     for (let i = this.strokes.length - 1; i >= 0; i--) {
       const stroke = this.strokes[i];
+      if (stroke.isBg || !stroke.points) continue;
       if (this.isPointNearStroke(pos, stroke, eraseRadius)) {
         this.strokes.splice(i, 1);
         erased = true;
@@ -951,6 +952,7 @@ class NeonDrawingBoard {
     if (this.lassoPoints.length < 3) return;
 
     this.strokes.forEach(stroke => {
+      if (stroke.isBg || !stroke.points) return;
       let insideCount = 0;
       stroke.points.forEach(p => {
         if (this.isPointInPolygon(p, this.lassoPoints)) insideCount++;
@@ -1023,7 +1025,7 @@ class NeonDrawingBoard {
   clearAll() {
     if (this.strokes.length > 0) {
       this.saveState();
-      this.strokes = [];
+      this.strokes = this.strokes.filter(s => s.isBg);
       this.clearSelection();
       this.render();
       if (this.onChange) this.onChange(this.getData());
