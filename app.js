@@ -3326,8 +3326,14 @@ function setupEventListeners() {
 
   const closeLightbox = () => {
     if (lightboxModal) lightboxModal.classList.add('hidden');
+    // Stop any playing video when closing
     const mediaContainer = document.getElementById('lightbox-media-container');
     if (mediaContainer) {
+      const vid = mediaContainer.querySelector('video');
+      if (vid) {
+        vid.pause();
+        vid.src = '';
+      }
       mediaContainer.innerHTML = '';
       mediaContainer.style.display = 'none';
     }
@@ -5061,37 +5067,3376 @@ function saveDiaries() {
 function renderMediaToContainer(mediaObj, container, onClick) {
   if (mediaObj.fileId) {
     if (mediaObj.type === 'video') {
+      const vid = document.createElement('video');
+      vid.className = 'timeline-diary-img';
+      vid.style.width = '100%';
+      vid.style.height = '100%';
+      vid.style.objectFit = 'cover';
+      vid.style.cursor = onClick ? 'pointer' : 'default';
+      vid.style.borderRadius = '4px';
+      vid.muted = true;
+      vid.playsInline = true;
+      if (onClick) vid.addEventListener('click', onClick);
+      FileDB.getFile(mediaObj.fileId).then(f => {
+        if (f) {
+           vid.src = URL.createObjectURL(f.blob);
+           vid.preload = 'metadata';
+        }
+      });
+      container.appendChild(vid);
+    } else if (mediaObj.type === 'pdf') {
+      const pdfIcon = document.createElement('div');
+      pdfIcon.style.width = '100%';
+      pdfIcon.style.height = '100%';
+      pdfIcon.style.display = 'flex';
+      pdfIcon.style.flexDirection = 'column';
+      pdfIcon.style.alignItems = 'center';
+      pdfIcon.style.justifyContent = 'center';
+      pdfIcon.style.background = '#fef2f2';
+      pdfIcon.style.color = '#ef4444';
+      pdfIcon.style.cursor = onClick ? 'pointer' : 'default';
+      pdfIcon.style.borderRadius = '4px';
+      pdfIcon.innerHTML = '<span style="font-size:24px;">📄</span><span style="font-size:12px; margin-top:4px;">PDF</span>';
+      if (onClick) pdfIcon.addEventListener('click', onClick);
+      container.appendChild(pdfIcon);
+    }
+  } else {
+    const img = document.createElement('img');
+    img.className = 'timeline-diary-img';
+    img.src = typeof mediaObj === 'string' ? mediaObj : mediaObj.src;
+    img.style = getImageStyle(typeof mediaObj === 'string' ? {src: mediaObj, mode:'cover'} : mediaObj);
+    img.style.cursor = onClick ? 'pointer' : 'default';
+    if (onClick) img.addEventListener('click', onClick);
+    container.appendChild(img);
+  }
+}
+
+function renderDiary() {
+  const dateKey = state.selectedDate;
+
+  // Auto-collapse creator when date shifts
+  if (state.renderedDiaryDate !== dateKey) {
+    state.editingRecordId = null;
+    state.diaryDraftImages = [];
+    state.renderedDiaryDate = dateKey;
+  }
+
+  const listContainer = document.getElementById('records-list-container');
+  const newRecordCreator = document.getElementById('new-record-creator');
+  const addRecordTriggerBox = document.getElementById('add-record-trigger-box');
+
+  if (!listContainer || !newRecordCreator || !addRecordTriggerBox) return;
+
+  const togglePhotosBtn = document.getElementById('btn-toggle-all-photos');
+  const toggleRecordsBtn = document.getElementById('btn-toggle-records');
+
+  // Update Photos button class (middle toggle button)
+  if (togglePhotosBtn) {
+    if (state.showRecordPhotos) {
+      togglePhotosBtn.classList.add('active-view');
+    } else {
+      togglePhotosBtn.classList.remove('active-view');
+    }
+  }
+
+  const recordsWrapper = document.getElementById('records-wrapper-block');
+
+  // Update Records button class & section visibility
+  if (toggleRecordsBtn) {
+    if (state.showRecords) {
+      toggleRecordsBtn.classList.add('active-view');
+      if (recordsWrapper) recordsWrapper.classList.remove('hidden');
+    } else {
+      toggleRecordsBtn.classList.remove('active-view');
+      if (recordsWrapper) recordsWrapper.classList.add('hidden');
+      return; // Skip drawing record cards if collapsed
+    }
+  }
+
+  listContainer.innerHTML = '';
+
+  let records = [];
+  const query = state.searchQuery.trim().toLowerCase();
+
+  if (query !== '') {
+    Object.keys(state.diaries).forEach(key => {
+      state.diaries[key].forEach(record => {
+        if (record.text && record.text.toLowerCase().includes(query)) {
+          records.push({ ...record, dateKey: key });
+        }
+      });
+    });
+  } else {
+    const dayRecords = state.diaries[dateKey] || [];
+    records = dayRecords.map(record => ({ ...record, dateKey }));
+  }
+
+  if (records.length === 0 && state.editingRecordId !== 'new') {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'diary-empty-state';
+    emptyState.innerHTML = query !== '' 
+      ? `<p>검색 결과가 없습니다.</p>` 
+      : `<p>아직 기록된 내용이 없습니다. 오늘 하루를 기록해 보세요!</p>`;
+    listContainer.appendChild(emptyState);
+  } else {
+    records.forEach(record => {
+      const card = document.createElement('div');
+      card.className = 'record-card';
+      card.dataset.recordId = record.id;
+
+      if (query !== '') {
+        const dateHeader = document.createElement('div');
+        dateHeader.className = 'record-search-header';
+        dateHeader.textContent = `📅 ${formatDateKeyToMonthDay(record.dateKey)}`;
+        dateHeader.title = `${record.dateKey}로 이동`;
+        dateHeader.addEventListener('click', () => {
+          state.selectedDate = record.dateKey;
+          state.searchQuery = '';
+          const searchInput = document.getElementById('global-search-input');
+          if (searchInput) searchInput.value = '';
+          const clearBtn = document.getElementById('btn-clear-search');
+          if (clearBtn) clearBtn.style.display = 'none';
+          applyPreferences();
+          updateUI();
+        });
+        card.appendChild(dateHeader);
+      }
+
+      if (state.editingRecordId === record.id) {
+        // --- EDIT MODE FOR THIS RECORD ---
+        const textContainer = document.createElement('div');
+        textContainer.style.position = 'relative';
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'diary-textarea';
+        textarea.id = `edit-record-text-${record.id}`;
+        textarea.value = record.text;
+        textarea.placeholder = '기록 내용을 수정해 보세요...';
+        textarea.style.paddingRight = '36px';
+        textContainer.appendChild(textarea);
+
+        const dictateBtn = document.createElement('button');
+        dictateBtn.type = 'button';
+        dictateBtn.className = 'dictation-btn';
+        dictateBtn.id = `btn-dictate-edit-${record.id}`;
+        dictateBtn.title = '음성 녹음 및 텍스트 변환(STT)';
+        dictateBtn.style.top = '8px';
+        dictateBtn.innerHTML = '🎙️';
+        textContainer.appendChild(dictateBtn);
+        card.appendChild(textContainer);
+
+        // Previews row (Audio)
+        const audioPreviewsContainer = document.createElement('div');
+        audioPreviewsContainer.className = 'audio-previews-container';
+        audioPreviewsContainer.id = `edit-record-audio-previews-${record.id}`;
+        audioPreviewsContainer.style.display = 'flex';
+        audioPreviewsContainer.style.flexDirection = 'column';
+        audioPreviewsContainer.style.gap = '8px';
+        audioPreviewsContainer.style.marginTop = '8px';
+        card.appendChild(audioPreviewsContainer);
+
+        setTimeout(() => {
+          handleAudioDictateClick(
+            `btn-dictate-edit-${record.id}`, 
+            `edit-record-text-${record.id}`, 
+            state.diaryDraftAudio, 
+            `edit-record-audio-previews-${record.id}`, 
+            () => renderAudioPreviews(`edit-record-audio-previews-${record.id}`, state.diaryDraftAudio, () => renderAudioPreviews(`edit-record-audio-previews-${record.id}`, state.diaryDraftAudio, null))
+          );
+          renderAudioPreviews(`edit-record-audio-previews-${record.id}`, state.diaryDraftAudio, () => renderAudioPreviews(`edit-record-audio-previews-${record.id}`, state.diaryDraftAudio, null));
+        }, 0);
+
+        // Options row: uploader & status
+        const mediaRow = document.createElement('div');
+        mediaRow.className = 'diary-media-row';
+
+        const label = document.createElement('label');
+        label.className = 'diary-photo-upload-label';
+        
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.className = 'diary-file-input';
+        fileInput.accept = 'image/*';
+        fileInput.multiple = true;
+        
+        fileInput.addEventListener('change', (e) => {
+          const files = Array.from(e.target.files);
+          if (files.length === 0) return;
+          
+          let processed = 0;
+          files.forEach(file => {
+            if (file.type.startsWith('video/') || file.type === 'application/pdf') {
+          FileDB.saveFile(file, file.type, file.name).then(id => {
+            todoEditDraftImages.push({ fileId: id, type: file.type.startsWith('video/') ? 'video' : 'pdf', name: file.name });
+            processed++;
+            if (processed === files.length) { renderTodoEditPreviews(); if (statusSpan) statusSpan.textContent = '파일 추가 완료'; }
+          });
+        } else {
+          compressAndSaveImage(file, (dataUrl) => {
+              state.diaryDraftImages.push({
+                src: dataUrl,
+                rotate: 0,
+                mode: 'cover',
+                filter: 'normal'
+              });
+              processed++;
+              if (processed === files.length) {
+                renderDiary();
+              }
+            });
+          });
+        });
+
+        label.appendChild(fileInput);
+        label.appendChild(document.createTextNode('📷 사진 선택 (여러장 가능)'));
+        mediaRow.appendChild(label);
+
+        const statusSpan = document.createElement('span');
+        statusSpan.className = 'diary-save-status';
+        statusSpan.textContent = '수정 중...';
+        mediaRow.appendChild(statusSpan);
+        card.appendChild(mediaRow);
+
+        // Previews row
+        const previewsContainer = document.createElement('div');
+        previewsContainer.className = 'record-draft-previews';
+        state.diaryDraftImages.forEach((imgSrc, idx) => {
+          // Normalize to object on the fly to support editing
+          if (typeof imgSrc === 'string') {
+            state.diaryDraftImages[idx] = { src: imgSrc, rotate: 0, mode: 'cover', filter: 'normal' };
+            imgSrc = state.diaryDraftImages[idx];
+          }
+
+          const thumb = document.createElement('div');
+          thumb.className = 'record-draft-thumb';
+          
+          const imgWrapper = document.createElement('div');
+          imgWrapper.className = 'thumb-img-wrapper';
+
+          renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(state.diaryDraftImages, idx, true));
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'delete-thumb-btn';
+          delBtn.innerHTML = '&times;';
+          delBtn.addEventListener('click', () => {
+            state.diaryDraftImages.splice(idx, 1);
+            renderDiary();
+          });
+          imgWrapper.appendChild(delBtn);
+          thumb.appendChild(imgWrapper);
+
+          previewsContainer.appendChild(thumb);
+        });
+        card.appendChild(previewsContainer);
+
+        // Drawing Board for Edit Mode
+        const drawingLabel = document.createElement('button');
+        drawingLabel.type = 'button';
+        drawingLabel.className = 'diary-photo-upload-label';
+        drawingLabel.style.marginTop = '10px';
+        drawingLabel.style.display = 'block';
+        drawingLabel.style.width = '100%';
+        drawingLabel.style.textAlign = 'left';
+        drawingLabel.style.background = 'transparent';
+        drawingLabel.style.border = 'none';
+        drawingLabel.style.cursor = 'pointer';
+        drawingLabel.innerHTML = '<span class="upload-icon">🎨</span> 손그림 그리기 (열기/닫기)';
+        card.appendChild(drawingLabel);
+
+        const drawingContainer = document.createElement('div');
+        drawingContainer.className = 'diary-drawing-container hidden';
+        drawingContainer.style.display = 'none';
+        card.appendChild(drawingContainer);
+
+        drawingLabel.addEventListener('click', () => {
+          openFullscreenDrawing(state.diaryDraftDrawing || [], (data) => {
+            state.diaryDraftDrawing = data;
+            // Update thumbnail
+            drawingContainer.innerHTML = '';
+            if (data && data.length > 0) {
+              drawingContainer.style.display = 'block';
+              drawingContainer.classList.remove('hidden');
+              new NeonDrawingBoard(drawingContainer, { initialData: data, readOnly: true });
+            } else {
+              drawingContainer.style.display = 'none';
+            }
+          });
+        });
+        
+        // Initial thumbnail render
+        if (hasDrawingData(state.diaryDraftDrawing)) {
+          drawingContainer.style.display = 'block';
+          drawingContainer.classList.remove('hidden');
+          new NeonDrawingBoard(drawingContainer, { initialData: state.diaryDraftDrawing, readOnly: true });
+        }
+
+        // Actions row
+        const actionsRow = document.createElement('div');
+        actionsRow.className = 'record-actions';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'record-btn save';
+        saveBtn.innerHTML = '💾 저장완료';
+        saveBtn.addEventListener('click', () => {
+          record.text = textarea.value;
+          record.images = [...state.diaryDraftImages];
+          record.drawing = [...(state.diaryDraftDrawing || [])];
+          record.audio = [...(state.diaryDraftAudio || [])];
+          saveDiaries();
+          state.editingRecordId = null;
+          state.diaryDraftImages = [];
+          state.diaryDraftDrawing = [];
+          state.diaryDraftAudio = [];
+          updateUI();
+        });
+        actionsRow.appendChild(saveBtn);
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'record-btn cancel';
+        cancelBtn.innerHTML = '취소';
+        cancelBtn.addEventListener('click', () => {
+          state.editingRecordId = null;
+          state.diaryDraftImages = [];
+          state.diaryDraftDrawing = [];
+          state.diaryDraftAudio = [];
+          renderDiary();
+        });
+        actionsRow.appendChild(cancelBtn);
+
+        card.appendChild(actionsRow);
+      } else {
+        // --- VIEW MODE FOR THIS RECORD ---
+        const viewText = document.createElement('p');
+        viewText.className = 'record-view-text';
+        viewText.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
+        card.appendChild(viewText);
+
+        if (record.images && record.images.length > 0) {
+          const grid = document.createElement('div');
+          grid.className = 'record-images-grid';
+          if (!state.showRecordPhotos) {
+            grid.classList.add('hidden');
+          }
+          record.images.forEach((imgSrc, idx) => {
+            const mediaEl = createMediaElementAsync(
+              imgSrc,
+              false,
+              () => openLightbox(record.images, idx)
+            );
+            grid.appendChild(mediaEl);
+          });
+          card.appendChild(grid);
+        }
+
+        if (hasDrawingData(record.drawing)) {
+          const drawingToggleBtn = document.createElement('div');
+          drawingToggleBtn.className = 'record-drawing-toggle';
+          drawingToggleBtn.innerHTML = '🖼️ 첨부된 그림 보기 (클릭하여 펼치기)';
+          drawingToggleBtn.style.cssText = 'cursor:pointer; color:#3b82f6; font-size:0.9rem; margin-top:8px; padding:8px; background:var(--panel-bg, rgba(255,255,255,0.05)); border-radius:4px; text-align:center; border: 1px dashed var(--panel-border, #333);';
+          card.appendChild(drawingToggleBtn);
+          
+          const viewDrawingContainer = document.createElement('div');
+          viewDrawingContainer.className = 'diary-drawing-container view-mode';
+          viewDrawingContainer.style.display = 'none';
+          card.appendChild(viewDrawingContainer);
+
+          drawingToggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            drawingToggleBtn.style.display = 'none';
+            viewDrawingContainer.style.display = 'block';
+            new NeonDrawingBoard(viewDrawingContainer, {
+              initialData: record.drawing,
+              readOnly: true
+            });
+          });
+          
+          viewDrawingContainer.style.cursor = 'pointer';
+          viewDrawingContainer.title = '클릭하여 곧바로 그림 수정하기';
+          const openDirectEdit = (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            openFullscreenDrawing(record.drawing, (data) => {
+              record.drawing = data;
+              saveDiaries();
+              renderDiary();
+            });
+          };
+          viewDrawingContainer.addEventListener('click', openDirectEdit);
+          viewDrawingContainer.addEventListener('contextmenu', openDirectEdit);
+        }
+
+        if (record.audio && record.audio.length > 0) {
+          const audioViewContainer = document.createElement('div');
+          audioViewContainer.className = 'audio-previews-container';
+          audioViewContainer.style.marginTop = '8px';
+          card.appendChild(audioViewContainer);
+          setTimeout(() => {
+            renderAudioPreviews(audioViewContainer.id || (audioViewContainer.id = `view-audio-${record.id}`), record.audio, null);
+          }, 0);
+        }
+
+        const actionsRow = document.createElement('div');
+        actionsRow.className = 'record-actions';
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'record-btn edit';
+        editBtn.innerHTML = '✏️ 수정';
+        editBtn.addEventListener('click', () => {
+          state.editingRecordId = record.id;
+          state.diaryDraftImages = [...(record.images || [])];
+          state.diaryDraftDrawing = record.drawing ? JSON.parse(JSON.stringify(record.drawing)) : [];
+          state.diaryDraftAudio = record.audio ? JSON.parse(JSON.stringify(record.audio)) : [];
+          renderDiary();
+        });
+        actionsRow.appendChild(editBtn);
+
+        const exportBtn = document.createElement('button');
+        exportBtn.type = 'button';
+        exportBtn.className = 'record-btn';
+        exportBtn.innerHTML = '💾 저장';
+        exportBtn.title = '이 일기를 파일(HTML)로 저장합니다';
+        exportBtn.addEventListener('click', () => {
+          let htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>일기 기록 - ${dateKey}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; line-height: 1.6; background: #fafafa; color: #333; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+  h2 { color: #222; border-bottom: 2px solid #eaeaea; padding-bottom: 10px; margin-top: 0; }
+  h3 { color: #555; margin-top: 24px; font-size: 1.1rem; }
+  img { max-width: 100%; border-radius: 8px; margin-bottom: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+  audio { width: 100%; margin-bottom: 8px; outline: none; }
+  .text-content { white-space: pre-wrap; margin-bottom: 20px; font-size: 1.05rem; }
+  .drawing-img { border: 1px solid #ddd; }
+</style>
+</head>
+<body>
+  <h2>📅 일기 기록 (${dateKey})</h2>
+  <div class="text-content">${(record.text || '').replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+`;
+          if (record.images && record.images.length > 0) {
+             htmlContent += `<h3>📷 사진</h3>`;
+             record.images.forEach(img => {
+                htmlContent += `<img src="${img.src || img}">`;
+             });
+          }
+          if (record.audio && record.audio.length > 0) {
+             htmlContent += `<h3>🎙️ 음성 녹음</h3>`;
+             record.audio.forEach(a => {
+                htmlContent += `<audio controls src="${a.src || a}"></audio>`;
+             });
+          }
+          if (hasDrawingData(record.drawing)) {
+             const canvas = card.querySelector('.diary-drawing-container canvas');
+             if (canvas) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const ctx = tempCanvas.getContext('2d');
+                ctx.fillStyle = '#1e1e1e';
+                ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+                ctx.drawImage(canvas, 0, 0);
+                htmlContent += `<h3>🎨 손그림</h3><img class="drawing-img" src="${tempCanvas.toDataURL('image/png')}">`;
+             }
+          }
+          htmlContent += `</body></html>`;
+          
+          const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          a.download = `diary_${dateStr}_${record.id}.html`;
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+        actionsRow.appendChild(exportBtn);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'record-btn delete';
+        deleteBtn.innerHTML = '❌ 삭제';
+        deleteBtn.addEventListener('click', () => {
+          if (confirm('이 기록을 삭제하시겠습니까?')) {
+            state.diaries[dateKey] = state.diaries[dateKey].filter(r => r.id !== record.id);
+            if (state.diaries[dateKey].length === 0) {
+              delete state.diaries[dateKey];
+            }
+            saveDiaries();
+            updateUI();
+          }
+        });
+        actionsRow.appendChild(deleteBtn);
+
+        card.appendChild(actionsRow);
+      }
+
+      listContainer.appendChild(card);
+    });
+  }
+
+  // Handle the New Record Creator visibility
+  if (state.editingRecordId === 'new') {
+    newRecordCreator.classList.remove('hidden');
+    addRecordTriggerBox.classList.add('hidden');
+    
+    const creatorPreviews = document.getElementById('new-record-previews');
+    if (creatorPreviews) {
+      creatorPreviews.innerHTML = '';
+      state.diaryDraftImages.forEach((imgSrc, idx) => {
+        // Normalize to object on the fly to support editing
+        if (typeof imgSrc === 'string') {
+          state.diaryDraftImages[idx] = { src: imgSrc, rotate: 0, mode: 'cover', filter: 'normal' };
+          imgSrc = state.diaryDraftImages[idx];
+        }
+
+        const thumb = document.createElement('div');
+        thumb.className = 'record-draft-thumb';
+        
+        const imgWrapper = document.createElement('div');
+        imgWrapper.className = 'thumb-img-wrapper';
+
+        renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(state.diaryDraftImages, idx, true));
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'delete-thumb-btn';
+        delBtn.innerHTML = '&times;';
+        delBtn.addEventListener('click', () => {
+          state.diaryDraftImages.splice(idx, 1);
+          renderDiary();
+        });
+        imgWrapper.appendChild(delBtn);
+        thumb.appendChild(imgWrapper);
+
+        creatorPreviews.appendChild(thumb);
+      });
+    }
+
+    const drawingContainer = document.getElementById('new-record-drawing-container');
+    const updateNewRecordThumb = () => {
+      if (drawingContainer) {
+        drawingContainer.innerHTML = '';
+        if (hasDrawingData(state.diaryDraftDrawing)) {
+          drawingContainer.style.display = 'block';
+          drawingContainer.classList.remove('hidden');
+          new NeonDrawingBoard(drawingContainer, { initialData: state.diaryDraftDrawing, readOnly: true });
+        } else {
+          drawingContainer.style.display = 'none';
+        }
+      }
+    };
+    updateNewRecordThumb();
+    
+    const btnToggleNewRecordDrawing = document.getElementById('btn-toggle-new-record-drawing');
+    if (btnToggleNewRecordDrawing) {
+      const newBtn = btnToggleNewRecordDrawing.cloneNode(true);
+      btnToggleNewRecordDrawing.parentNode.replaceChild(newBtn, btnToggleNewRecordDrawing);
+      newBtn.addEventListener('click', () => {
+        openFullscreenDrawing(state.diaryDraftDrawing || [], (data) => {
+          state.diaryDraftDrawing = data;
+          updateNewRecordThumb();
+        });
+      });
+    }
+  } else {
+    newRecordCreator.classList.add('hidden');
+    addRecordTriggerBox.classList.remove('hidden');
+    
+    const newRecordText = document.getElementById('new-record-text');
+    if (newRecordText) newRecordText.value = '';
+  }
+}
+
+// Render timeline view combining history of todos and diary records
+function renderTimeline() {
+  const timelineList = document.getElementById('timeline-list');
+  if (!timelineList) return;
+
+  timelineList.innerHTML = '';
+
+  // Get all unique date keys that have at least one todo or diary record
+  const datesSet = new Set();
+  Object.keys(state.todos).forEach(dk => {
+    if (state.todos[dk] && state.todos[dk].length > 0) {
+      datesSet.add(dk);
+    }
+  });
+  Object.keys(state.diaries).forEach(dk => {
+    if (state.diaries[dk] && state.diaries[dk].length > 0) {
+      datesSet.add(dk);
+    }
+  });
+
+  // Sort chronologically (earliest to latest!)
+  const sortedDates = Array.from(datesSet).sort();
+
+  if (sortedDates.length === 0) {
+    const placeholder = document.createElement('div');
+    placeholder.style = 'text-align: center; padding: 40px; color: var(--text-secondary); font-size: 0.95rem; font-weight: 600;';
+    placeholder.textContent = '아직 기록된 할 일이나 일기가 없습니다. 할 일을 등록하거나 일기를 써보세요!';
+    timelineList.appendChild(placeholder);
+    return;
+  }
+
+  const weekdays = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+
+  sortedDates.forEach(dateKey => {
+    const dateObj = new Date(dateKey);
+    const formattedDateText = `${dateObj.getFullYear()}년 ${dateObj.getMonth() + 1}월 ${dateObj.getDate()}일 (${weekdays[dateObj.getDay()]})`;
+
+    const card = document.createElement('div');
+    card.className = 'timeline-card';
+
+    // Header
+    const cardHeader = document.createElement('div');
+    cardHeader.className = 'timeline-card-header';
+    cardHeader.textContent = formattedDateText;
+    card.appendChild(cardHeader);
+
+    // Grid Container for sections
+    const sectionsGrid = document.createElement('div');
+    sectionsGrid.className = 'timeline-card-sections';
+
+    // 1. TODO SECTION
+    const todoSec = document.createElement('div');
+    todoSec.className = 'timeline-section';
+    
+    const todoTitle = document.createElement('div');
+    todoTitle.className = 'timeline-section-title';
+    todoTitle.innerHTML = '🎯 할 일';
+    todoSec.appendChild(todoTitle);
+
+    const todoContent = document.createElement('div');
+    todoContent.className = 'timeline-section-content';
+
+    const todos = state.todos[dateKey] || [];
+    if (todos.length === 0) {
+      const emptyMsg = document.createElement('div');
+      emptyMsg.style = 'color: var(--text-muted); font-size: 0.8rem; font-style: italic;';
+      emptyMsg.textContent = '등록된 할 일이 없습니다.';
+      todoContent.appendChild(emptyMsg);
+    } else {
+      const todoListContainer = document.createElement('div');
+      todoListContainer.className = 'timeline-todo-list';
+
+      // Sort todos: uncompleted first, then completed last. Within groups, important first, then by time.
+      const sortedTodos = [...todos].sort((a, b) => {
+        if (a.completed !== b.completed) {
+          return a.completed ? 1 : -1;
+        }
+        const isImpA = Boolean(a.isImportant);
+        const isImpB = Boolean(b.isImportant);
+        if (isImpA !== isImpB) {
+          return isImpA ? -1 : 1;
+        }
+        if (a.time && !b.time) return -1;
+        if (!a.time && b.time) return 1;
+        if (a.time && b.time) {
+          return a.time.localeCompare(b.time);
+        }
+        return a.id - b.id;
+      });
+
+      sortedTodos.forEach(todo => {
+        const item = document.createElement('div');
+        item.className = `todo-item ${todo.completed ? 'completed' : ''} ${todo.isImportant ? 'is-important' : ''}`;
+
+        const itemLeft = document.createElement('div');
+        itemLeft.className = 'todo-item-left';
+
+        // Checkbox
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.className = 'todo-checkbox';
+        chk.checked = todo.completed;
+        chk.addEventListener('change', () => {
+          pushToHistory();
+          todo.completed = chk.checked;
+          
+          // Complete routine in active instance if applicable
+          if (todo.isRoutine) {
+            state.routines = state.routines.map(r => r.text === todo.text ? { ...r, completed: todo.completed } : r);
+            saveRoutines();
+          }
+
+          saveTodos();
+          updateUI();
+          renderTimeline();
+        });
+        itemLeft.appendChild(chk);
+
+        // Text
+        const txt = document.createElement('span');
+        txt.className = 'todo-text';
+        txt.innerHTML = highlightMarkup(todo.text, state.searchQuery);
+        
+        // Double click to edit!
+        txt.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          // Set selectedDate temporarily to let modal edit save back to correct date!
+          state.selectedDate = dateKey;
+          openTodoEditModal(todo.id);
+        });
+
+        // Touch longpress helper for mobile inside timeline:
+        let pressTimer = null;
+        let startX = 0, startY = 0;
+        txt.addEventListener('touchstart', (e) => {
+          const touch = e.touches[0];
+          startX = touch.clientX;
+          startY = touch.clientY;
+          pressTimer = setTimeout(() => {
+            state.selectedDate = dateKey;
+            openTodoEditModal(todo.id);
+          }, 450);
+        }, { passive: true });
+        txt.addEventListener('touchmove', (e) => {
+          if (!pressTimer) return;
+          const touch = e.touches[0];
+          if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+          }
+        }, { passive: true });
+        txt.addEventListener('touchend', () => {
+          if (pressTimer) clearTimeout(pressTimer);
+        });
+        itemLeft.appendChild(txt);
+
+        // Meta Div for Badges
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'todo-item-meta';
+
+        // Important Tag
+        if (todo.isImportant) {
+          const impBadge = document.createElement('span');
+          impBadge.className = 'important-badge';
+          impBadge.innerHTML = '⭐ 중요';
+          metaDiv.appendChild(impBadge);
+        }
+
+        // Category Tag
+        if (todo.category && state.categories[todo.category]) {
+          const cat = state.categories[todo.category];
+          const badge = document.createElement('span');
+          badge.className = 'todo-badge';
+          badge.textContent = cat.label;
+          if (cat.class) {
+            badge.classList.add(cat.class);
+          } else {
+            badge.style.color = cat.color;
+            badge.style.backgroundColor = hexToRgba(cat.color, 0.12);
+            badge.style.border = `1px solid ${hexToRgba(cat.color, 0.25)}`;
+          }
+          metaDiv.appendChild(badge);
+        }
+
+        // Time Tag
+        if (todo.time) {
+          const timeBadge = document.createElement('span');
+          timeBadge.className = 'todo-time-badge';
+          timeBadge.innerHTML = `⏰ ${formatTimeKorean(todo.time)}`;
+          metaDiv.appendChild(timeBadge);
+        }
+        itemLeft.appendChild(metaDiv);
+
+        // Memo rendering
+        if (todo.memo && todo.memo.trim() !== '') {
+          const memoDiv = document.createElement('div');
+          memoDiv.className = 'todo-memo-text';
+          memoDiv.innerHTML = linkify(todo.memo).replace(/\n/g, '<br>');
+          itemLeft.appendChild(memoDiv);
+        }
+
+        // Action row layout
+        const mainRow = document.createElement('div');
+        mainRow.className = 'todo-item-main';
+        mainRow.appendChild(itemLeft);
+
+        // Delete Button
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'delete-btn';
+        delBtn.innerHTML = '✖';
+        delBtn.title = '할 일 삭제';
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm('이 할 일을 삭제하시겠습니까?')) {
+            deleteTodo(todo.id, todo.text, todo.isRoutine, dateKey);
+            renderTimeline();
+          }
+        });
+        mainRow.appendChild(delBtn);
+
+        item.appendChild(mainRow);
+        todoListContainer.appendChild(item);
+      });
+
+      todoContent.appendChild(todoListContainer);
+    }
+    todoSec.appendChild(todoContent);
+    sectionsGrid.appendChild(todoSec);
+
+    // 2. DIARY/RECORDS SECTION
+    const diarySec = document.createElement('div');
+    diarySec.className = 'timeline-section';
+
+    const diaryTitle = document.createElement('div');
+    diaryTitle.className = 'timeline-section-title';
+    diaryTitle.innerHTML = '📝 오늘의 기록';
+    diarySec.appendChild(diaryTitle);
+
+    const diaryContent = document.createElement('div');
+    diaryContent.className = 'timeline-section-content';
+
+    const records = state.diaries[dateKey] || [];
+    if (records.length === 0) {
+      const emptyMsg = document.createElement('div');
+      emptyMsg.style = 'color: var(--text-muted); font-size: 0.8rem; font-style: italic;';
+      emptyMsg.textContent = '작성된 기록이 없습니다.';
+      diaryContent.appendChild(emptyMsg);
+    } else {
+      records.forEach(record => {
+        const diaryCard = document.createElement('div');
+        diaryCard.className = 'timeline-diary-card';
+
+        // Check if this record is currently in Edit mode
+        if (state.editingTimelineRecordId === record.id) {
+          const editArea = document.createElement('textarea');
+          editArea.className = 'diary-textarea';
+          editArea.style = 'min-height: 80px; width: 100%; margin-bottom: 8px; font-size: 0.85rem;';
+          editArea.value = record.text || '';
+          diaryCard.appendChild(editArea);
+
+          const btnRow = document.createElement('div');
+          btnRow.style = 'display: flex; gap: 6px;';
+
+          const saveBtn = document.createElement('button');
+          saveBtn.type = 'button';
+          saveBtn.className = 'timeline-action-btn-safe';
+          saveBtn.innerHTML = '💾 저장';
+          saveBtn.addEventListener('click', () => {
+            pushToHistory();
+            record.text = editArea.value;
+            saveDiaries();
+            state.editingTimelineRecordId = null;
+            updateUI();
+            renderTimeline();
+          });
+          btnRow.appendChild(saveBtn);
+
+          const cancelBtn = document.createElement('button');
+          cancelBtn.type = 'button';
+          cancelBtn.className = 'timeline-action-btn-danger';
+          cancelBtn.innerHTML = '취소';
+          cancelBtn.addEventListener('click', () => {
+            state.editingTimelineRecordId = null;
+            renderTimeline();
+          });
+          btnRow.appendChild(cancelBtn);
+
+          diaryCard.appendChild(btnRow);
+        } else {
+          // Emotion + Text View
+          const textBlock = document.createElement('div');
+          textBlock.className = 'timeline-diary-text';
+          
+          if (record.emotion) {
+            const emotionSpan = document.createElement('span');
+            emotionSpan.style = 'margin-right: 6px; font-size: 1.1rem;';
+            emotionSpan.textContent = record.emotion;
+            textBlock.appendChild(emotionSpan);
+          }
+
+          const spanContent = document.createElement('span');
+          spanContent.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
+          textBlock.appendChild(spanContent);
+          
+          diaryCard.appendChild(textBlock);
+
+          // Photos
+          if (record.images && record.images.length > 0) {
+            const imgDiv = document.createElement('div');
+            imgDiv.className = 'timeline-diary-images';
+            record.images.forEach((imgSrc, idx) => {
+              const img = document.createElement('img');
+              img.className = 'timeline-diary-img';
+              img.src = typeof imgSrc === 'string' ? imgSrc : imgSrc.src;
+              img.style = getImageStyle(imgSrc);
+              img.addEventListener('click', () => {
+                openLightbox(record.images, idx);
+              });
+              imgDiv.appendChild(img);
+            });
+            diaryCard.appendChild(imgDiv);
+          }
+
+          // Inline Actions: Edit / Delete
+          const actionRow = document.createElement('div');
+          actionRow.style = 'display: flex; gap: 8px; margin-top: 6px;';
+
+          const editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'timeline-action-btn-safe';
+          editBtn.innerHTML = '✏️ 수정';
+          editBtn.addEventListener('click', () => {
+            state.editingTimelineRecordId = record.id;
+            renderTimeline();
+          });
+          actionRow.appendChild(editBtn);
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'timeline-action-btn-danger';
+          delBtn.innerHTML = '❌ 삭제';
+          delBtn.addEventListener('click', () => {
+            if (confirm('이 기록을 삭제하시겠습니까?')) {
+              pushToHistory();
+              state.diaries[dateKey] = state.diaries[dateKey].filter(r => r.id !== record.id);
+              if (state.diaries[dateKey].length === 0) {
+                delete state.diaries[dateKey];
+              }
+              saveDiaries();
+              updateUI();
+              renderTimeline();
+            }
+          });
+          actionRow.appendChild(delBtn);
+
+          diaryCard.appendChild(actionRow);
+        }
+
+        diaryContent.appendChild(diaryCard);
+      });
+    }
+
+    diarySec.appendChild(diaryContent);
+    sectionsGrid.appendChild(diarySec);
+
+    card.appendChild(sectionsGrid);
+    timelineList.appendChild(card);
+  });
+}
+
+// Read image file, resize, compress to JPEG format and return as Base64 Data URL
+function compressAndSaveImage(file, callback) {
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    const img = new Image();
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      
+      const MAX_WIDTH = 600;
+      const MAX_HEIGHT = 600;
+      
+      if (width > height) {
+        if (width > MAX_WIDTH) {
+          height *= MAX_WIDTH / width;
+          width = MAX_WIDTH;
+        }
+      } else {
+        if (height > MAX_HEIGHT) {
+          width *= MAX_HEIGHT / height;
+          height = MAX_HEIGHT;
+        }
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      callback(dataUrl);
+    };
+    img.src = event.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Helper to get CSS inline styles for rotated and filtered images
+function getImageStyle(imgObj) {
+  if (!imgObj) return '';
+  if (typeof imgObj === 'string') {
+    // Backward compatibility with raw base64 string images
+    return 'object-fit: cover !important;';
+  }
+  
+  let styles = [];
+  if (imgObj.rotate) {
+    styles.push(`transform: rotate(${imgObj.rotate}deg)`);
+  }
+  styles.push('object-fit: cover !important');
+  // Color filters are removed per user request
+  return styles.join('; ') + ';';
+}
+
+// Open Image Lightbox Modal for larger view and download (Carousel)
+function openLightbox(imagesArray, initialIndex, isDraft) {
+  const modal = document.getElementById('image-lightbox-modal');
+  if (!modal) return;
+
+  lightboxImages = imagesArray || [];
+  lightboxIndex = initialIndex || 0;
+  lightboxIsDraft = !!isDraft;
+
+  showLightboxImage(lightboxIndex);
+  modal.classList.remove('hidden');
+}
+
+// Show specific image inside lightbox with styles and counter
+function showLightboxImage(idx) {
+  const lightboxImg = document.getElementById('lightbox-image');
+  const downloadLink = document.getElementById('lightbox-download-link');
+  const counterEl = document.getElementById('lightbox-counter');
+  const btnPrev = document.getElementById('btn-prev-lightbox');
+  const btnNext = document.getElementById('btn-next-lightbox');
+
+  if (!lightboxImg || lightboxImages.length === 0) return;
+
+  // Bound index
+  if (idx < 0) idx = lightboxImages.length - 1;
+  if (idx >= lightboxImages.length) idx = 0;
+  lightboxIndex = idx;
+
+  const currentImg = lightboxImages[lightboxIndex];
+  const src = typeof currentImg === 'string' ? currentImg : currentImg.src;
+
+  // Add transition animation
+  lightboxImg.classList.remove('lightbox-image-transition');
+  void lightboxImg.offsetWidth; // Trigger reflow
+  lightboxImg.classList.add('lightbox-image-transition');
+
+  
+  if (currentImg && currentImg.fileId) {
+    lightboxImg.style.display = 'none';
+    let mediaContainer = document.getElementById('lightbox-media-container');
+    if (!mediaContainer) {
+      mediaContainer = document.createElement('div');
+      mediaContainer.id = 'lightbox-media-container';
+      mediaContainer.style.width = '100%';
+      mediaContainer.style.height = '100%';
+      mediaContainer.style.display = 'flex';
+      mediaContainer.style.alignItems = 'center';
+      mediaContainer.style.justifyContent = 'center';
+      lightboxImg.parentNode.insertBefore(mediaContainer, lightboxImg);
+    }
+    mediaContainer.innerHTML = '';
+    mediaContainer.style.display = 'flex';
+    if (currentImg.type === 'video') {
+      const vid = document.createElement('video');
+      vid.style.maxWidth = '100%';
+      vid.style.maxHeight = '100%';
+      vid.controls = true;
+      vid.autoplay = true;
+      FileDB.getFile(currentImg.fileId).then(f => {
+        if (f) vid.src = URL.createObjectURL(f.blob);
+      });
+      mediaContainer.appendChild(vid);
+    } else if (currentImg.type === 'pdf') {
+       const iframe = document.createElement('iframe');
+       iframe.style.width = '100%';
+       iframe.style.height = '100%';
+       FileDB.getFile(currentImg.fileId).then(f => {
+         if (f) iframe.src = URL.createObjectURL(f.blob);
+       });
+       mediaContainer.appendChild(iframe);
+    }
+  } else {
+    lightboxImg.style.display = 'block';
+    const mediaContainer = document.getElementById('lightbox-media-container');
+    if (mediaContainer) mediaContainer.style.display = 'none';
+    lightboxImg.src = src;
+    lightboxImg.style = getImageStyle(currentImg);
+  }
+
+
+  if (downloadLink) {
+    downloadLink.href = src;
+    downloadLink.download = `record-photo-${state.selectedDate || 'date'}-${lightboxIndex + 1}.jpg`;
+  }
+
+  if (counterEl) {
+    counterEl.textContent = `${lightboxIndex + 1} / ${lightboxImages.length}`;
+  }
+
+  // Toggle prev/next button visibility
+  if (lightboxImages.length <= 1) {
+    if (btnPrev) btnPrev.classList.add('hidden');
+    if (btnNext) btnNext.classList.add('hidden');
+    if (counterEl) counterEl.classList.add('hidden');
+  } else {
+    if (btnPrev) btnPrev.classList.remove('hidden');
+    if (btnNext) btnNext.classList.remove('hidden');
+    if (counterEl) counterEl.classList.remove('hidden');
+  }
+}
+
+// Start editing custom category
+function startEditCategory(catId) {
+  state.editingCategoryId = catId;
+  toggleCategoryForm(true);
+}
+
+// Initialize Preset Neon Color Dots in Form
+function initPresetColors() {
+  const container = document.getElementById('preset-colors-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  PRESET_COLORS.forEach(color => {
+    const dot = document.createElement('div');
+    dot.className = 'preset-color-dot';
+    dot.style.backgroundColor = color;
+    dot.dataset.color = color;
+
+    dot.addEventListener('click', () => {
+      document.querySelectorAll('.preset-color-dot').forEach(el => el.classList.remove('active'));
+      dot.classList.add('active');
+
+      const picker = document.getElementById('new-cat-color');
+      if (picker) {
+        picker.value = color;
+      }
+      
+      const hueSlider = document.getElementById('new-cat-hue');
+      const lightnessSlider = document.getElementById('new-cat-lightness');
+      if (hueSlider || lightnessSlider) {
+        const hsl = hexToHsl(color);
+        if (hueSlider) hueSlider.value = hsl.h;
+        if (lightnessSlider) lightnessSlider.value = hsl.l;
+      }
+      updateCategoryPreview();
+    });
+
+    container.appendChild(dot);
+  });
+}
+
+// Toggle Category Panel slide down/up
+function toggleCategoryForm(show) {
+  const panel = document.getElementById('category-form-panel');
+  if (!panel) return;
+
+  const headerSpan = panel.querySelector('.category-form-header > span');
+  const saveBtn = document.getElementById('btn-save-category');
+
+  if (show) {
+    panel.classList.remove('hidden');
+    const nameInput = document.getElementById('new-cat-name');
+    const picker = document.getElementById('new-cat-color');
+    const hueSlider = document.getElementById('new-cat-hue');
+
+    if (state.editingCategoryId) {
+      // EDIT MODE
+      if (headerSpan) headerSpan.textContent = '카테고리 수정';
+      if (saveBtn) saveBtn.textContent = '수정';
+
+      const cat = state.categories[state.editingCategoryId];
+      if (nameInput) {
+        nameInput.value = cat.label;
+        nameInput.focus();
+      }
+      if (picker) picker.value = cat.color;
+      if (hueSlider) {
+        const hsl = hexToHsl(cat.color);
+        hueSlider.value = hsl.h;
+        const lightnessSlider = document.getElementById('new-cat-lightness');
+        if (lightnessSlider) lightnessSlider.value = hsl.l;
+      }
+    } else {
+      // ADD MODE
+      if (headerSpan) headerSpan.textContent = '새 카테고리 추가';
+      if (saveBtn) saveBtn.textContent = '추가';
+
+      if (nameInput) {
+        nameInput.value = '';
+        nameInput.focus();
+      }
+      if (picker) picker.value = '#a855f7'; // default purple
+      if (hueSlider) hueSlider.value = 270; // purple hue
+      const lightnessSlider = document.getElementById('new-cat-lightness');
+      if (lightnessSlider) lightnessSlider.value = 60; // default lightness
+    }
+
+    // Set active preset color indicator
+    const currentColorVal = picker ? picker.value : '';
+    document.querySelectorAll('.preset-color-dot').forEach(dot => {
+      if (dot.dataset.color.toLowerCase() === currentColorVal.toLowerCase()) {
+        dot.classList.add('active');
+      } else {
+        dot.classList.remove('active');
+      }
+    });
+
+    updateCategoryPreview();
+  } else {
+    panel.classList.add('hidden');
+    state.editingCategoryId = null; // Clear edit state
+  }
+}
+
+// Update the live Preview chip color & text
+function updateCategoryPreview() {
+  const preview = document.getElementById('category-preview');
+  const nameInput = document.getElementById('new-cat-name');
+  const picker = document.getElementById('new-cat-color');
+  if (!preview || !nameInput || !picker) return;
+
+  const label = nameInput.value.trim() || '미리보기';
+  const color = picker.value;
+
+  preview.textContent = label;
+  preview.style.color = color;
+  preview.style.backgroundColor = hexToRgba(color, 0.1);
+  preview.style.borderColor = color;
+  preview.style.boxShadow = `0 0 8px ${hexToRgba(color, 0.25)}`;
+
+  // Update dynamic gradient of the lightness slider track
+  const newCatHue = document.getElementById('new-cat-hue');
+  const newCatLightness = document.getElementById('new-cat-lightness');
+  if (newCatHue && newCatLightness) {
+    const hue = parseInt(newCatHue.value, 10);
+    const startColor = hslToHex(hue, 85, 15);
+    const middleColor = hslToHex(hue, 85, 50);
+    const endColor = hslToHex(hue, 85, 85);
+    newCatLightness.style.background = `linear-gradient(to right, ${startColor} 0%, ${middleColor} 50%, ${endColor} 100%)`;
+  }
+}
+
+// Create and save or update a category
+function handleSaveCategory() {
+  const nameInput = document.getElementById('new-cat-name');
+  const picker = document.getElementById('new-cat-color');
+  if (!nameInput || !picker) return;
+
+  const label = nameInput.value.trim();
+  if (!label) {
+    alert('카테고리 이름을 입력해주세요.');
+    nameInput.focus();
+    return;
+  }
+
+  // Validate duplicate label (case insensitive, ignoring current editing category)
+  const isDuplicate = Object.keys(state.categories).some(key => {
+    if (state.editingCategoryId && key === state.editingCategoryId) return false;
+    return state.categories[key].label.toLowerCase() === label.toLowerCase();
+  });
+
+  if (isDuplicate) {
+    alert('이미 존재하는 카테고리 이름입니다.');
+    nameInput.focus();
+    return;
+  }
+
+  const color = picker.value;
+  pushToHistory();
+
+  if (state.editingCategoryId) {
+    // Edit category
+    state.categories[state.editingCategoryId].label = label;
+    state.categories[state.editingCategoryId].color = color;
+    if (state.categories[state.editingCategoryId].class) {
+      delete state.categories[state.editingCategoryId].class;
+    }
+  } else {
+    // Add new category
+    const newCatId = `custom_${Date.now()}`;
+    state.categories[newCatId] = {
+      label: label,
+      color: color,
+      isCustom: true
+    };
+    state.selectedCategory = newCatId;
+  }
+
+  // Save to LocalStorage
+  saveCategories();
+
+  // Hide form
+  toggleCategoryForm(false);
+
+  // Re-render selector and all UI
+  updateUI();
+}
+
+// Render Calendar Grid
+function renderCalendar() {
+  const dayNames = Array.from(calendarGrid.querySelectorAll('.day-name'));
+  calendarGrid.innerHTML = '';
+  dayNames.forEach(name => calendarGrid.appendChild(name));
+
+  const year = state.currentMonth.getFullYear();
+  const month = state.currentMonth.getMonth();
+
+  monthYearDisplay.textContent = `${year}년 ${month + 1}월`;
+
+  const firstDayIndex = new Date(year, month, 1).getDay();
+  const totalDays = new Date(year, month + 1, 0).getDate();
+  const prevTotalDays = new Date(year, month, 0).getDate();
+
+  const todayStr = formatDateString(new Date());
+
+  // Render Previous Month Padding Days
+  for (let i = firstDayIndex; i > 0; i--) {
+    const day = prevTotalDays - i + 1;
+    const prevMonthDate = new Date(year, month - 1, day);
+    const dateKey = formatDateString(prevMonthDate);
+    createCell(day, dateKey, true);
+  }
+
+  // Render Current Month Days
+  for (let day = 1; day <= totalDays; day++) {
+    const currentMonthDate = new Date(year, month, day);
+    const dateKey = formatDateString(currentMonthDate);
+    const isToday = dateKey === todayStr;
+    createCell(day, dateKey, false, isToday);
+  }
+
+  // Render Next Month Padding Days
+  const totalCellsSoFar = firstDayIndex + totalDays;
+  const remainingCells = 42 - totalCellsSoFar;
+  for (let day = 1; day <= remainingCells; day++) {
+    const nextMonthDate = new Date(year, month + 1, day);
+    const dateKey = formatDateString(nextMonthDate);
+    createCell(day, dateKey, true);
+  }
+}
+
+// Helper to create calendar cell
+function createCell(day, dateKey, isOtherMonth = false, isToday = false) {
+  const cell = document.createElement('div');
+  cell.classList.add('calendar-cell');
+  if (isOtherMonth) cell.classList.add('other-month');
+  if (isToday) cell.classList.add('today');
+  if (state.selectedDate === dateKey) cell.classList.add('active-date');
+
+  const query = state.searchQuery.trim().toLowerCase();
+  if (query !== '') {
+    let hasMatch = false;
+    if (state.todos[dateKey]) {
+      hasMatch = state.todos[dateKey].some(todo => {
+        const cat = getCategory(todo.category);
+        const catLabel = cat && cat.label ? String(cat.label).toLowerCase() : '';
+        return todo.text.toLowerCase().includes(query) || catLabel.includes(query);
+      });
+    }
+    if (!hasMatch && state.diaries[dateKey]) {
+      hasMatch = state.diaries[dateKey].some(record => record.text && record.text.toLowerCase().includes(query));
+    }
+    if (hasMatch) {
+      cell.classList.add('search-match-cell');
+    }
+  }
+
+  cell.dataset.date = dateKey;
+
+  const numSpan = document.createElement('span');
+  numSpan.classList.add('date-number');
+  numSpan.textContent = day;
+  cell.appendChild(numSpan);
+
+  const dotContainer = document.createElement('div');
+  dotContainer.classList.add('cell-dot-container');
+  
+  if (state.todos[dateKey]) {
+    state.todos[dateKey].forEach(todo => {
+      const dot = document.createElement('div');
+      dot.classList.add('cell-dot');
+      const cat = getCategory(todo.category);
+      dot.style.backgroundColor = cat.color;
+      if (todo.completed) {
+        dot.style.opacity = '0.3';
+      }
+      dotContainer.appendChild(dot);
+    });
+  }
+  cell.appendChild(dotContainer);
+
+  // D-day cell indicator
+  if (state.ddays && state.ddays.length > 0) {
+    const cellDateObj = new Date(dateKey);
+    const activeDdays = state.ddays.filter(d => {
+      const dDate = new Date(d.date);
+      if (d.type === 'anniversary') {
+        return dDate.getMonth() === cellDateObj.getMonth() && dDate.getDate() === cellDateObj.getDate();
+      } else {
+        return d.date === dateKey;
+      }
+    });
+
+    if (activeDdays.length > 0) {
+      const ddayPill = document.createElement('div');
+      ddayPill.className = 'calendar-dday-pill';
+      ddayPill.style.background = activeDdays[0].color || 'var(--accent-color)';
+      ddayPill.title = activeDdays.map(d => d.title).join(', ');
+      
+      const isAnniv = activeDdays[0].type === 'anniversary';
+      const ddayInfo = calculateDday(activeDdays[0].date, activeDdays[0].type);
+      ddayPill.textContent = isAnniv ? '기념일' : ddayInfo.label;
+      cell.appendChild(ddayPill);
+    }
+  }
+
+  cell.addEventListener('click', () => {
+    if (state.copyingTodoId) {
+      let copyingTodo = null;
+      Object.keys(state.todos).forEach(dk => {
+        const found = state.todos[dk].find(t => t.id === state.copyingTodoId);
+        if (found) copyingTodo = found;
+      });
+
+      if (copyingTodo) {
+        if (!state.todos[dateKey]) state.todos[dateKey] = [];
+        const exists = state.todos[dateKey].some(t => t.text.trim().toLowerCase() === copyingTodo.text.trim().toLowerCase());
+        
+        if (!exists) {
+          pushToHistory();
+          state.todos[dateKey].push({
+            id: Date.now() + Math.random(),
+            text: copyingTodo.text,
+            category: copyingTodo.category,
+            completed: false,
+            isRoutine: copyingTodo.isRoutine,
+            isImportant: Boolean(copyingTodo.isImportant),
+            time: copyingTodo.time || ''
+          });
+          saveTodos();
+          updateUI();
+        }
+      }
+      return;
+    }
+
+    if (state.clearMode) {
+      pushToHistory();
+      
+      delete state.todos[dateKey];
+      delete state.routinesPopulatedDates[dateKey];
+      saveTodos();
+      saveRoutinesPopulatedDates();
+      
+      // Turn off clear mode automatically after one delete for safety
+      state.clearMode = false;
+      applyClearMode();
+      
+      updateUI();
+      return;
+    }
+
+    state.selectedDate = dateKey;
+    
+    // Auto-populate routines for this newly selected day
+    populateRoutinesForDate(dateKey);
+
+    const cellDate = new Date(dateKey);
+    state.currentMonth = new Date(cellDate.getFullYear(), cellDate.getMonth(), 1);
+    
+    updateUI();
+  });
+
+  calendarGrid.appendChild(cell);
+}
+
+// Find all dates containing a todo with the exact same text
+function findOtherDatesForTodo(todoText) {
+  const dates = [];
+  Object.keys(state.todos).forEach(dk => {
+    const exists = state.todos[dk].some(t => t.text.trim().toLowerCase() === todoText.trim().toLowerCase());
+    if (exists) {
+      dates.push(dk);
+    }
+  });
+  dates.sort();
+  return dates;
+}
+
+// Escape HTML special characters for XSS prevention
+function escapeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Convert links inside text to clickable anchors
+function linkify(text) {
+  if (!text) return '';
+  const escaped = escapeHtml(text);
+  const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+  return escaped.replace(urlRegex, (url) => {
+    let href = url;
+    if (!/^https?:\/\//i.test(href)) {
+      href = 'http://' + href;
+    }
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="planner-link" onclick="handleLinkClick(event)">${url}</a>`;
+  });
+}
+
+// Highlight matching search query outside HTML tags
+function highlightMarkup(html, query) {
+  if (!html) return '';
+  if (!query || query.trim() === '') return html;
+  const escapedQuery = escapeHtml(query).replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const regex = new RegExp(`(${escapedQuery})(?![^<>]*>)`, 'gi');
+  return html.replace(regex, '<mark class="search-highlight">$1</mark>');
+}
+
+
+// Intercept link clicks based on state preferences
+window.handleLinkClick = function(event) {
+  event.stopPropagation(); // Avoid triggering parent edit or drag events
+  if (!state.allowLinkNavigation) {
+    event.preventDefault();
+  }
+};
+
+// Convert YYYY-MM-DD to M월 D일
+function formatDateKeyToMonthDay(dateKey) {
+  const parts = dateKey.split('-');
+  if (parts.length === 3) {
+    return `${parseInt(parts[1], 10)}월 ${parseInt(parts[2], 10)}일`;
+  }
+  return dateKey;
+}
+
+// Remove todo with matching text from a specific date
+function removeTodoFromDate(todoText, dateKey) {
+  if (!state.todos[dateKey]) return;
+  pushToHistory();
+  state.todos[dateKey] = state.todos[dateKey].filter(t => t.text.trim().toLowerCase() !== todoText.trim().toLowerCase());
+  if (state.todos[dateKey].length === 0) {
+    delete state.todos[dateKey];
+  }
+  saveTodos();
+  updateUI();
+}
+
+// Apply visual visibility to copy mode banner
+function applyCopyModeBanner() {
+  const banner = document.getElementById('copy-mode-banner');
+  if (!banner) return;
+
+  if (state.copyingTodoId) {
+    banner.classList.remove('hidden');
+    let todoText = '';
+    Object.keys(state.todos).forEach(dk => {
+      const found = state.todos[dk].find(t => t.id === state.copyingTodoId);
+      if (found) todoText = found.text;
+    });
+    const spanText = banner.querySelector('span');
+    if (spanText) {
+      spanText.innerHTML = `🎯 달력에서 날짜를 클릭하면 <strong>"${todoText}"</strong> 할 일이 해당 날짜에 복사됩니다.`;
+    }
+  } else {
+    banner.classList.add('hidden');
+  }
+}
+
+// Apply D-days panel visibility
+function applyDdaysVisibility() {
+  const panel = document.getElementById('ddays-panel');
+  const btnToggle = document.getElementById('btn-toggle-ddays');
+  if (!panel || !btnToggle) return;
+
+  if (state.showDdays) {
+    panel.classList.remove('hidden');
+    btnToggle.classList.add('active-view');
+    renderDdays();
+  } else {
+    panel.classList.add('hidden');
+    btnToggle.classList.remove('active-view');
+  }
+}
+
+// Calculate D-day
+function calculateDday(targetDateStr, type) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const target = new Date(targetDateStr);
+  target.setHours(0, 0, 0, 0);
+
+  if (type === 'anniversary') {
+    const currentYear = today.getFullYear();
+    let nextOccurrence = new Date(currentYear, target.getMonth(), target.getDate());
+    nextOccurrence.setHours(0, 0, 0, 0);
+    
+    if (nextOccurrence < today) {
+      nextOccurrence.setFullYear(currentYear + 1);
+    }
+
+    const diffMs = nextOccurrence - today;
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    
+    const birthYear = target.getFullYear();
+    const targetYear = nextOccurrence.getFullYear();
+    const yearsCount = targetYear - birthYear;
+
+    if (diffDays === 0) {
+      return { label: '오늘 기념일!', sub: `${yearsCount}주년` };
+    } else {
+      return { label: `D-${diffDays}`, sub: `${yearsCount}주년 (${nextOccurrence.getMonth() + 1}/${nextOccurrence.getDate()})` };
+    }
+  } else {
+    const diffMs = target - today;
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays > 0) {
+      return { label: `D-${diffDays}`, sub: '남음' };
+    } else if (diffDays === 0) {
+      return { label: 'D-Day', sub: '오늘!' };
+    } else {
+      return { label: `D+${Math.abs(diffDays)}`, sub: '지남' };
+    }
+  }
+}
+
+// Render D-days Panel
+function renderDdays() {
+  const listContainer = document.getElementById('ddays-list');
+  if (!listContainer) return;
+  listContainer.innerHTML = '';
+
+  if (!state.ddays) state.ddays = [];
+
+  if (state.ddays.length === 0) {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'empty-state';
+    emptyState.style = 'grid-column: 1 / -1; text-align: center; color: var(--text-muted); font-style: italic; padding: 40px;';
+    emptyState.textContent = '등록된 디데이나 기념일이 없습니다. 오른쪽 위의 "디데이 추가" 버튼을 눌러 등록해 보세요!';
+    listContainer.appendChild(emptyState);
+    return;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Sort: D-day closest to today first
+  const sortedDdays = [...state.ddays].sort((a, b) => {
+    const getNextOccur = (d) => {
+      const target = new Date(d.date);
+      if (d.type === 'anniversary') {
+        const currentYear = today.getFullYear();
+        let next = new Date(currentYear, target.getMonth(), target.getDate());
+        if (next < today) next.setFullYear(currentYear + 1);
+        return next;
+      }
+      return target;
+    };
+    return getNextOccur(a) - getNextOccur(b);
+  });
+
+  sortedDdays.forEach(dday => {
+    const card = document.createElement('div');
+    card.className = 'dday-card';
+    card.style.borderColor = hexToRgba(dday.color, 0.35);
+    if (state.theme === 'light') {
+      card.style.boxShadow = `0 4px 15px ${hexToRgba(dday.color, 0.1)}`;
+    } else {
+      card.style.boxShadow = `0 4px 15px ${hexToRgba(dday.color, 0.2)}`;
+    }
+
+    const info = calculateDday(dday.date, dday.type);
+
+    const numDiv = document.createElement('div');
+    numDiv.className = 'dday-card-number';
+    numDiv.style.color = dday.color;
+    numDiv.textContent = info.label;
+
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'dday-card-title';
+    titleDiv.textContent = dday.title;
+
+    const dateDiv = document.createElement('div');
+    dateDiv.className = 'dday-card-date';
+    dateDiv.textContent = dday.date;
+
+    const subDiv = document.createElement('div');
+    subDiv.className = 'dday-card-badge';
+    subDiv.textContent = info.sub;
+
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.dday-card-delete-btn')) return;
+      openDdayModal(dday.id);
+    });
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'dday-card-delete-btn';
+    delBtn.innerHTML = '✕';
+    delBtn.title = '디데이 삭제';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm(`"${dday.title}" 디데이를 정말로 삭제하시겠습니까?`)) {
+        deleteDday(dday.id);
+      }
+    });
+
+    card.appendChild(numDiv);
+    card.appendChild(titleDiv);
+    card.appendChild(dateDiv);
+    card.appendChild(subDiv);
+    card.appendChild(delBtn);
+
+    listContainer.appendChild(card);
+  });
+}
+
+// Open D-day Modal
+function openDdayModal(ddayId = null) {
+  const modal = document.getElementById('dday-modal');
+  const modalTitle = document.getElementById('dday-modal-title');
+  const titleInput = document.getElementById('dday-title-input');
+  const dateInput = document.getElementById('dday-date-input');
+  const btnTypeCountdown = document.getElementById('btn-dday-type-countdown');
+  const btnTypeAnniversary = document.getElementById('btn-dday-type-anniversary');
+  const colorDots = document.querySelectorAll('#dday-modal-colors .dday-color-dot');
+
+  if (!modal) return;
+
+  state.editingDdayId = ddayId;
+
+  // Reset defaults
+  titleInput.value = '';
+  dateInput.value = formatDateString(new Date());
+  btnTypeCountdown.classList.add('active');
+  btnTypeAnniversary.classList.remove('active');
+  
+  colorDots.forEach(d => {
+    d.classList.remove('active');
+    d.style.borderColor = 'transparent';
+  });
+  if (colorDots[0]) {
+    colorDots[0].classList.add('active');
+    colorDots[0].style.borderColor = 'white';
+  }
+
+  if (ddayId) {
+    modalTitle.textContent = '🎉 디데이 수정';
+    const dday = state.ddays.find(d => d.id === ddayId);
+    if (dday) {
+      titleInput.value = dday.title;
+      dateInput.value = dday.date;
+      
+      if (dday.type === 'anniversary') {
+        btnTypeAnniversary.classList.add('active');
+        btnTypeCountdown.classList.remove('active');
+      } else {
+        btnTypeCountdown.classList.add('active');
+        btnTypeAnniversary.classList.remove('active');
+      }
+
+      colorDots.forEach(dot => {
+        if (dot.dataset.color === dday.color) {
+          colorDots.forEach(d => {
+            d.classList.remove('active');
+            d.style.borderColor = 'transparent';
+          });
+          dot.classList.add('active');
+          dot.style.borderColor = 'white';
+        }
+      });
+    }
+  } else {
+    modalTitle.textContent = '🎉 디데이 추가';
+  }
+
+  modal.classList.remove('hidden');
+}
+
+// Close D-day Modal
+function closeDdayModal() {
+  const modal = document.getElementById('dday-modal');
+  if (modal) modal.classList.add('hidden');
+  state.editingDdayId = null;
+}
+
+// Save D-day
+function saveDdayData() {
+  const titleInput = document.getElementById('dday-title-input');
+  const dateInput = document.getElementById('dday-date-input');
+  const btnTypeAnniversary = document.getElementById('btn-dday-type-anniversary');
+  const activeDot = document.querySelector('#dday-modal-colors .dday-color-dot.active');
+
+  if (!titleInput || !dateInput) return;
+
+  const title = titleInput.value.trim();
+  const date = dateInput.value;
+  const type = btnTypeAnniversary.classList.contains('active') ? 'anniversary' : 'countdown';
+  const color = activeDot ? activeDot.dataset.color : '#6366f1';
+
+  if (!title) {
+    alert('디데이 제목을 입력해 주세요.');
+    return;
+  }
+  if (!date) {
+    alert('목표 날짜를 선택해 주세요.');
+    return;
+  }
+
+  pushToHistory();
+
+  if (!state.ddays) state.ddays = [];
+
+  if (state.editingDdayId) {
+    // Edit existing
+    state.ddays = state.ddays.map(d => d.id === state.editingDdayId ? { ...d, title, date, type, color } : d);
+  } else {
+    // Add new
+    state.ddays.push({
+      id: Date.now(),
+      title,
+      date,
+      type,
+      color
+    });
+  }
+
+  saveDdays();
+  closeDdayModal();
+  updateUI();
+  renderDdays();
+}
+
+// Delete D-day
+function deleteDday(ddayId) {
+  pushToHistory();
+  state.ddays = state.ddays.filter(d => d.id !== ddayId);
+  saveDdays();
+  updateUI();
+  renderDdays();
+}
+
+// --- Routines Management Panel ---
+function renderRoutinesPanel() {
+  const container = document.getElementById('routines-list-container');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (!state.routines || state.routines.length === 0) {
+    container.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 20px; font-size: 0.9rem;">등록된 루틴이 없습니다. 새로운 루틴을 추가해 보세요.</div>';
+    return;
+  }
+
+  state.routines.forEach(routine => {
+    const card = document.createElement('div');
+    card.className = 'routine-card';
+
+    const left = document.createElement('div');
+    left.className = 'routine-card-left';
+    left.style.display = 'flex';
+    left.style.flexDirection = 'column';
+    left.style.gap = '4px';
+
+    const titleRow = document.createElement('div');
+    titleRow.style.display = 'flex';
+    titleRow.style.alignItems = 'center';
+    titleRow.style.gap = '10px';
+
+    const catDot = document.createElement('div');
+    catDot.className = 'todo-item-category';
+    const catColor = state.categories[routine.category] ? state.categories[routine.category].color : (state.categories['other'] ? state.categories['other'].color : '#6b7280');
+    catDot.style.backgroundColor = catColor;
+    catDot.style.boxShadow = `0 0 6px ${catColor}`;
+
+    const text = document.createElement('span');
+    text.className = 'routine-card-text';
+    text.textContent = routine.text;
+    text.style.cursor = 'pointer';
+    text.title = '클릭/더블클릭/길게 누르기: 루틴 수정';
+    
+    // Add long press and click logic
+    let pressTimer = null;
+    let longPressed = false;
+    let startX = 0, startY = 0;
+    
+    const startPress = (e) => {
+      if (e.type === 'mousedown' && e.button !== 0) return;
+      longPressed = false;
+      const touch = e.touches ? e.touches[0] : e;
+      startX = touch.clientX; startY = touch.clientY;
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        longPressed = true;
+        openRoutineEditModal(routine.id);
+      }, 400);
+    };
+    const movePress = (e) => {
+      if (!pressTimer) return;
+      const touch = e.touches ? e.touches[0] : e;
+      if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) cancelPress();
+    };
+    const cancelPress = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
+
+    text.addEventListener('touchstart', startPress, { passive: true });
+    text.addEventListener('touchend', cancelPress);
+    text.addEventListener('touchmove', movePress, { passive: true });
+    text.addEventListener('touchcancel', cancelPress);
+    text.addEventListener('mousedown', startPress);
+    text.addEventListener('mouseup', cancelPress);
+    text.addEventListener('mouseleave', cancelPress);
+    text.addEventListener('mousemove', movePress);
+    text.addEventListener('dblclick', (e) => { e.stopPropagation(); openRoutineEditModal(routine.id); });
+    text.addEventListener('click', (e) => {
+      if (longPressed) { longPressed = false; return; }
+      openRoutineEditModal(routine.id);
+    });
+
+    titleRow.appendChild(catDot);
+    titleRow.appendChild(text);
+    left.appendChild(titleRow);
+
+    if (routine.startDate || routine.endDate) {
+      const dateMeta = document.createElement('div');
+      dateMeta.style.fontSize = '0.75rem';
+      dateMeta.style.color = 'var(--text-secondary)';
+      dateMeta.style.paddingLeft = '22px';
+      dateMeta.textContent = `🗓️ ${routine.startDate || '계속'} ~ ${routine.endDate || '계속'}`;
+      left.appendChild(dateMeta);
+    }
+
+    const right = document.createElement('div');
+    right.className = 'routine-card-actions';
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'routine-del-btn';
+    delBtn.textContent = '삭제';
+    delBtn.onclick = () => deleteRoutine(routine.id);
+
+    right.appendChild(delBtn);
+    card.appendChild(left);
+    card.appendChild(right);
+    container.appendChild(card);
+  });
+}
+
+function deleteRoutine(routineId) {
+  if (confirm('이 루틴을 삭제하시겠습니까?\\n(이미 등록된 과거/오늘의 할 일은 삭제되지 않습니다)')) {
+    pushToHistory();
+    state.routines = state.routines.filter(r => r.id !== routineId);
+    saveRoutines();
+    renderRoutinesPanel();
+    updateUI();
+  }
+}
+
+let editingRoutineId = null;
+let editRoutineModalCategory = 'other';
+
+function openRoutineEditModal(routineId) {
+  const routine = state.routines.find(r => r.id === routineId);
+  if (!routine) return;
+  
+  editingRoutineId = routineId;
+  editRoutineModalCategory = routine.category || 'other';
+
+  const textInput = document.getElementById('routine-edit-modal-text');
+  const startInput = document.getElementById('routine-edit-modal-start');
+  const endInput = document.getElementById('routine-edit-modal-end');
+  
+  if (textInput) textInput.value = routine.text;
+  if (startInput) startInput.value = routine.startDate || '';
+  if (endInput) endInput.value = routine.endDate || '';
+
+  const catsContainer = document.getElementById('routine-edit-modal-cats');
+  if (catsContainer) {
+    catsContainer.innerHTML = '';
+    
+    // None/Other Option
+    const otherBtn = document.createElement('button');
+    otherBtn.type = 'button';
+    otherBtn.className = 'todo-modal-cat-btn';
+    otherBtn.innerHTML = `<div class="todo-modal-cat-dot" style="background-color: #888;"></div>없음/기본`;
+    if (editRoutineModalCategory === 'other' || editRoutineModalCategory === 'none') {
+      otherBtn.classList.add('active');
+    }
+    otherBtn.addEventListener('click', () => {
+      editRoutineModalCategory = 'other';
+      document.querySelectorAll('#routine-edit-modal-cats .todo-modal-cat-btn').forEach(btn => btn.classList.remove('active'));
+      otherBtn.classList.add('active');
+    });
+    catsContainer.appendChild(otherBtn);
+
+    Object.keys(state.categories).forEach(catId => {
+      if (catId === 'other' || catId === 'none') return;
+      const cat = state.categories[catId];
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'todo-modal-cat-btn';
+      btn.innerHTML = `<div class="todo-modal-cat-dot" style="background-color: ${cat.color || '#fff'};"></div>${cat.label}`;
+      if (editRoutineModalCategory === catId) {
+        btn.classList.add('active');
+      }
+      btn.addEventListener('click', () => {
+        editRoutineModalCategory = catId;
+        document.querySelectorAll('#routine-edit-modal-cats .todo-modal-cat-btn').forEach(btn => btn.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      catsContainer.appendChild(btn);
+    });
+  }
+
+  const modal = document.getElementById('routine-edit-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeRoutineEditModal() {
+  const modal = document.getElementById('routine-edit-modal');
+  if (modal) modal.classList.add('hidden');
+  editingRoutineId = null;
+}
+
+// Ensure listeners are only added once; placing this inside an init block or globally is fine since app.js is loaded once.
+// We will add it globally immediately.
+setTimeout(() => {
+  const btnSave = document.getElementById('btn-routine-edit-save');
+  const btnCancel = document.getElementById('btn-routine-edit-cancel');
+  const backdrop = document.getElementById('routine-edit-backdrop');
+  
+  if (btnCancel) btnCancel.addEventListener('click', closeRoutineEditModal);
+  if (backdrop) backdrop.addEventListener('click', closeRoutineEditModal);
+  
+  if (btnSave) {
+    btnSave.addEventListener('click', () => {
+      if (!editingRoutineId) return;
+      const routine = state.routines.find(r => r.id === editingRoutineId);
+      if (!routine) return;
+
+      const textInput = document.getElementById('routine-edit-modal-text');
+      const startInput = document.getElementById('routine-edit-modal-start');
+      const endInput = document.getElementById('routine-edit-modal-end');
+
+      const text = textInput ? textInput.value.trim() : '';
+      if (!text) return;
+
+      const startDate = startInput && startInput.value ? startInput.value : '';
+      const endDate = endInput && endInput.value ? endInput.value : '';
+
+      pushToHistory();
+
+      // Update routine template
+      routine.text = text;
+      routine.startDate = startDate;
+      routine.endDate = endDate;
+      routine.category = editRoutineModalCategory;
+
+      saveRoutines();
+      renderRoutinesPanel();
+      
+      // Update future/incomplete todos that match this routine's old ID or exact text
+      // (For simplicity, we'll just update todos that have `todo.isRoutine = true` and same text)
+      // Wait, we don't have routine ID in todos, we rely on `isRoutine` and matching text.
+      // We should probably rely on the routine's OLD text to find which todos to update.
+      // But the user might just want the routine panel updated. If we want to sync:
+      // It's safer to just let the user see the new text going forward when it populates.
+      // However, we can re-evaluate population for selected date immediately.
+      
+      populateRoutinesForDate(state.selectedDate, true);
+      updateUI();
+      closeRoutineEditModal();
+    });
+  }
+}, 100);
+
+function initRoutinesPanel() {
+  const addBtn = document.getElementById('add-routine-btn');
+  const input = document.getElementById('new-routine-input');
+  
+  if (addBtn && input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (e.isComposing || e.keyCode === 229) return;
+        e.preventDefault();
+        addBtn.click();
+      }
+    });
+    
+    addBtn.addEventListener('click', () => {
+      const text = input.value.trim();
+      if (!text) return;
+      
+      pushToHistory();
+      
+      let categoryToUse = state.selectedCategory || 'other';
+      const routinePicker = document.getElementById('routine-category-selector');
+      if (routinePicker) {
+        const activeBtn = routinePicker.querySelector('.cat-option.selected');
+        if (activeBtn) categoryToUse = activeBtn.dataset.category;
+      }
+      
+      const startInput = document.getElementById('new-routine-start');
+      const endInput = document.getElementById('new-routine-end');
+      const startDate = startInput && startInput.value ? startInput.value : '';
+      const endDate = endInput && endInput.value ? endInput.value : '';
+      
+      if (!state.routines) state.routines = [];
+      state.routines.push({
+        id: Date.now(),
+        text: text,
+        category: categoryToUse,
+        startDate: startDate,
+        endDate: endDate
+      });
+      
+      input.value = '';
+      if (startInput) startInput.value = '';
+      if (endInput) endInput.value = '';
+      
+      saveRoutines();
+      renderRoutinesPanel();
+      
+      populateRoutinesForDate(state.selectedDate, true);
+      updateUI();
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        addBtn.click();
+      }
+    });
+  }
+}
+
+// Parse natural language date (e.g. 7월20일, 7/20) and time (e.g. 오전 1시 20분, 자정 30분, 14:30)
+function parseNaturalLanguageTodo(inputText) {
+  let text = inputText.trim();
+  
+  // Year to use: default to currently selected year
+  const selectedYear = new Date(state.selectedDate).getFullYear();
+  let parsedDateKey = state.selectedDate; // default fallback
+  let parsedTime = '';
+
+  // 1. Relative Dates (오늘, 내일, 모레, 어제, 그제)
+  const relativeDateRegex = /(그제|그저께|어제|오늘|내일|모레|글피)/i;
+  const relMatch = text.match(relativeDateRegex);
+  if (relMatch) {
+    const keyword = relMatch[1];
+    const todayDate = new Date();
+    let offset = 0;
+    if (keyword === '그제' || keyword === '그저께') offset = -2;
+    else if (keyword === '어제') offset = -1;
+    else if (keyword === '오늘') offset = 0;
+    else if (keyword === '내일') offset = 1;
+    else if (keyword === '모레') offset = 2;
+    else if (keyword === '글피') offset = 3;
+    
+    todayDate.setDate(todayDate.getDate() + offset);
+    parsedDateKey = formatDateString(todayDate);
+    text = text.replace(relativeDateRegex, '').trim();
+  } else {
+    // 1-1. Regex for Exact Date:
+    // Matches "7월 20일", "7월20일", "7/20", "12/25", "12월25일"
+    const dateRegexes = [
+      /(\d{1,2})\s*월\s*(\d{1,2})\s*일?/i,
+      /(?:^|\s)(\d{1,2})\s*\/\s*(\d{1,2})(?=$|\s)/
+    ];
+
+  for (const regex of dateRegexes) {
+    const match = text.match(regex);
+    if (match) {
+      const month = parseInt(match[1], 10);
+      const day = parseInt(match[2], 10);
+      // Validate date ranges
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        parsedDateKey = `${selectedYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        // Remove the matched date text from final todo text
+        text = text.replace(regex, '').trim();
+        break; // Stop after first successful date match
+      }
+    }
+  }
+
+  }
+
+  // 2. Regex for Time:
+  // A. "자정 20분", "자정", "정오 15분", "정오"
+  const midnightNoonRegex = /(자정|정오)(?:\s*(\d{1,2})\s*분)?/i;
+  let timeMatch = text.match(midnightNoonRegex);
+  if (timeMatch) {
+    const keyword = timeMatch[1];
+    const minStr = timeMatch[2] || '00';
+    const hour = keyword === '자정' ? 0 : 12;
+    const minute = parseInt(minStr, 10);
+    if (minute >= 0 && minute <= 59) {
+      parsedTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+      text = text.replace(midnightNoonRegex, '').trim();
+    }
+  }
+
+  // B. "오전 1시 20분", "오후 12시 5분", "오전 1시", "오후 3시"
+  if (!parsedTime) {
+    const ampmRegex = /(오전|오후)\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?/i;
+    timeMatch = text.match(ampmRegex);
+    if (timeMatch) {
+      const ampm = timeMatch[1];
+      let hour = parseInt(timeMatch[2], 10);
+      const minStr = timeMatch[3] || '00';
+      const minute = parseInt(minStr, 10);
+
+      if (hour >= 1 && hour <= 12 && minute >= 0 && minute <= 59) {
+        if (ampm === '오후' && hour < 12) {
+          hour += 12;
+        } else if (ampm === '오전' && hour === 12) {
+          hour = 0;
+        }
+        parsedTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        text = text.replace(ampmRegex, '').trim();
+      }
+    }
+  }
+
+  // C. 24h format: "14:30", "09:15"
+  if (!parsedTime) {
+    const format24hRegex = /(?:^|\s)(\d{1,2})\s*:\s*(\d{2})(?=$|\s)/;
+    timeMatch = text.match(format24hRegex);
+    if (timeMatch) {
+      const hour = parseInt(timeMatch[1], 10);
+      const minute = parseInt(timeMatch[2], 10);
+      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+        parsedTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        text = text.replace(format24hRegex, '').trim();
+      }
+    }
+  }
+
+  // 3. Importance keywords (⭐, ★, [중요], 중요:)
+  let isImportant = false;
+  const importantRegex = /(?:^|\s)(?:⭐|★|\[중요\]|중요:)\s*/i;
+  if (importantRegex.test(text)) {
+    isImportant = true;
+    text = text.replace(importantRegex, ' ').trim();
+  }
+
+  // Clean up any double spaces leftover
+  text = text.replace(/\s+/g, ' ').trim();
+
+  return {
+    cleanedText: text,
+    dateKey: parsedDateKey,
+    time: parsedTime,
+    isImportant: isImportant
+  };
+}
+
+// Convert AM/PM, Hour, Minute selector values to 24h HH:MM string
+function convertTo24h(ampm, hourStr, minStr) {
+  if (!hourStr || !minStr) return '';
+  let hour = parseInt(hourStr, 10);
+  if (ampm === 'PM' && hour < 12) {
+    hour += 12;
+  } else if (ampm === 'AM' && hour === 12) {
+    hour = 0;
+  }
+  const formattedHour = String(hour).padStart(2, '0');
+  const formattedMin = String(minStr).padStart(2, '0');
+  return `${formattedHour}:${formattedMin}`;
+}
+
+// Parse 24h HH:MM string into AM/PM, Hour, Minute
+function parse24h(timeStr) {
+  if (!timeStr) return { ampm: 'AM', hour: '', minute: '' };
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return { ampm: 'AM', hour: '', minute: '' };
+  const hour24 = parseInt(parts[0], 10);
+  const minVal = parts[1];
+  const ampm = hour24 >= 12 ? 'PM' : 'AM';
+  let hour12 = hour24 % 12;
+  if (hour12 === 0) hour12 = 12;
+  const formattedHour = String(hour12).padStart(2, '0');
+  return { ampm, hour: formattedHour, minute: minVal };
+}
+
+// Format HH:MM 24h string into Korean AM/PM Hour/Minute with Midnight (자정) & Noon (정오) conversions
+function formatTimeKorean(timeStr) {
+  if (!timeStr) return '';
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return timeStr;
+  const hour24 = parseInt(parts[0], 10);
+  const minVal = parts[1];
+
+  if (hour24 === 0) {
+    if (minVal === '00') return '자정';
+    return `자정 ${parseInt(minVal, 10)}분`;
+  }
+  if (hour24 === 12) {
+    if (minVal === '00') return '정오';
+    return `정오 ${parseInt(minVal, 10)}분`;
+  }
+
+  const ampm = hour24 >= 12 ? '오후' : '오전';
+  let hour12 = hour24 % 12;
+  if (hour12 === 0) hour12 = 12;
+  return `${ampm} ${hour12}시 ${minVal}분`;
+}
+
+// Render Todo Items for the selected date
+function renderTodos() {
+  
+  const dateObj = new Date(state.selectedDate);
+  const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+  const formattedText = `${dateObj.getMonth() + 1}월 ${dateObj.getDate()}일 (${weekdays[dateObj.getDay()]})`;
+  
+  const todayStr = formatDateString(new Date());
+  if (state.selectedDate === todayStr) {
+    selectedDateDisplay.textContent = `${formattedText} - 오늘`;
+  } else {
+    selectedDateDisplay.textContent = formattedText;
+  }
+
+  if (todoInputField) {
+    todoInputField.placeholder = `${dateObj.getMonth() + 1}월 ${dateObj.getDate()}일의 새로운 할 일을 입력해 보세요...`;
+  }
+
+  const inputContainer = document.querySelector('.todo-input-container');
+  const filterContainer = document.getElementById('todo-cat-filter-container');
+  const toggleBtn = document.getElementById('btn-toggle-todos');
+  if (toggleBtn) {
+    if (state.showTodos) {
+      toggleBtn.classList.add('active-view');
+      if (inputContainer) inputContainer.classList.remove('hidden');
+      if (filterContainer) filterContainer.classList.remove('hidden');
+      if (todoItemsList) todoItemsList.classList.remove('hidden');
+    } else {
+      toggleBtn.classList.remove('active-view');
+      if (inputContainer) inputContainer.classList.add('hidden');
+      if (filterContainer) filterContainer.classList.add('hidden');
+      if (todoItemsList) todoItemsList.classList.add('hidden');
+    }
+  }
+
+  todoItemsList.innerHTML = '';
+
+  let dayTodos = [];
+  const query = state.searchQuery.trim().toLowerCase();
+  
+  if (query !== '') {
+    Object.keys(state.todos).forEach(dateKey => {
+      state.todos[dateKey].forEach(todo => {
+        const cat = getCategory(todo.category);
+        const catLabel = cat && cat.label ? String(cat.label).toLowerCase() : '';
+        if (todo.text.toLowerCase().includes(query) || catLabel.includes(query)) {
+          dayTodos.push({ ...todo, dateKey });
+        }
+      });
+    });
+  } else {
+    const currentDayTodos = state.todos[state.selectedDate] || [];
+    dayTodos = currentDayTodos.map(todo => ({ ...todo, dateKey: state.selectedDate }));
+  }
+
+  // Filter by category tab or routine if not 'all'
+  const filterCat = state.todoFilterCategory || 'all';
+  let filteredTodos = dayTodos;
+  if (filterCat === 'routine') {
+    filteredTodos = dayTodos.filter(todo => Boolean(todo.isRoutine));
+  } else if (filterCat !== 'all') {
+    const filterCatObj = state.categories[filterCat];
+    filteredTodos = dayTodos.filter(todo => {
+      let cat = todo.category || 'other';
+      if (!state.categories[cat]) {
+        const matchKey = Object.keys(state.categories).find(k => state.categories[k].label === cat);
+        if (matchKey) cat = matchKey;
+      }
+      return String(cat).toLowerCase() === String(filterCat).toLowerCase();
+    });
+  }
+
+  if (dayTodos.length === 0) {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.classList.add('empty-state');
+    emptyDiv.textContent = query !== '' ? '검색 결과가 없습니다.' : '할 일이 없습니다. 새로운 할 일을 추가해 보세요!';
+    todoItemsList.appendChild(emptyDiv);
+    return;
+  }
+
+  if (filteredTodos.length === 0) {
+    if (filterCat === 'routine') {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'todo-filter-empty-state';
+      emptyDiv.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.1rem;">🔄</span>
+          <span>선택한 날짜에 등록된 <strong>루틴</strong> 할 일이 없습니다.</span>
+        </div>
+        <div class="empty-actions">
+          <button type="button" class="empty-btn primary" id="btn-quick-add-routine">
+            ➕ 새 루틴 할 일 추가하기
+          </button>
+          <button type="button" class="empty-btn" id="btn-show-all-todos-filter">
+            📋 전체 할 일 보기
+          </button>
+        </div>
+      `;
+      todoItemsList.appendChild(emptyDiv);
+
+      const btnQuickAdd = emptyDiv.querySelector('#btn-quick-add-routine');
+      if (btnQuickAdd) {
+        btnQuickAdd.addEventListener('click', () => {
+          const routineCheckbox = document.getElementById('routine-checkbox');
+          if (routineCheckbox) {
+            routineCheckbox.checked = true;
+          }
+          if (todoInputField) {
+            todoInputField.focus();
+            const todoInputContainer = document.querySelector('.todo-input-container');
+            if (todoInputContainer) todoInputContainer.classList.add('expanded');
+          }
+        });
+      }
+      const btnShowAll = emptyDiv.querySelector('#btn-show-all-todos-filter');
+      if (btnShowAll) {
+        btnShowAll.addEventListener('click', () => {
+          state.todoFilterCategory = 'all';
+          updateUI();
+        });
+      }
+      return;
+    }
+
+    const activeCatObj = state.categories[filterCat];
+    const activeCatLabel = activeCatObj ? activeCatObj.label : '선택한 카테고리';
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'todo-filter-empty-state';
+    emptyDiv.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 1.1rem;">🎯</span>
+        <span><strong>'${escapeHtml(activeCatLabel)}'</strong> 탭에 등록된 할 일이 없습니다.</span>
+      </div>
+      <div class="empty-actions">
+        <button type="button" class="empty-btn primary" id="btn-quick-add-to-cat">
+          ➕ '${escapeHtml(activeCatLabel)}' 할 일 추가하기
+        </button>
+        <button type="button" class="empty-btn" id="btn-show-all-todos-filter">
+          📋 전체 할 일 보기
+        </button>
+      </div>
+    `;
+    todoItemsList.appendChild(emptyDiv);
+
+    const btnQuickAdd = emptyDiv.querySelector('#btn-quick-add-to-cat');
+    if (btnQuickAdd) {
+      btnQuickAdd.addEventListener('click', () => {
+        state.selectedCategory = filterCat;
+        if (todoInputField) {
+          todoInputField.focus();
+          const todoInputContainer = document.querySelector('.todo-input-container');
+          if (todoInputContainer) todoInputContainer.classList.add('expanded');
+        }
+      });
+    }
+    const btnShowAll = emptyDiv.querySelector('#btn-show-all-todos-filter');
+    if (btnShowAll) {
+      btnShowAll.addEventListener('click', () => {
+        state.todoFilterCategory = 'all';
+        updateUI();
+      });
+    }
+    return;
+  }
+
+  // Sort: Uncompleted first, completed last. Important (isImportant: true) items at the very top.
+  // Then timed items first (chronologically), untimed last.
+  const sortedTodos = [...filteredTodos].sort((a, b) => {
+    if (a.completed !== b.completed) {
+      return a.completed ? 1 : -1;
+    }
+
+    const isImpA = Boolean(a.isImportant);
+    const isImpB = Boolean(b.isImportant);
+    if (isImpA !== isImpB) {
+      return isImpA ? -1 : 1;
+    }
+    
+    // Auto-sorting by time has been removed so customOrder fully dictates the order
+    return (a.customOrder || a.id) - (b.customOrder || b.id);
+  });
+
+  sortedTodos.forEach(todo => {
+    const item = document.createElement('div');
+    item.classList.add('todo-item');
+    item.setAttribute('data-todo-id', todo.id);
+    if (todo.completed) {
+      item.classList.add('completed');
+    }
+    if (todo.isImportant) {
+      item.classList.add('is-important');
+    }
+
+    const itemLeft = document.createElement('div');
+    itemLeft.classList.add('todo-item-left');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.classList.add('todo-checkbox');
+    checkbox.checked = todo.completed;
+    checkbox.addEventListener('change', () => toggleTodo(todo.id));
+
+    const textSpan = document.createElement('span');
+    textSpan.classList.add('todo-text');
+    textSpan.innerHTML = highlightMarkup(linkify(todo.text), state.searchQuery);
+    // Double-click or click on text to edit
+    // Single-click to toggle dates viewer
+    textSpan.addEventListener('click', (e) => {
+      if (item.querySelector('.todo-edit-container')) return; // ignore when editing
+      e.stopPropagation();
+      if (state.selectedTodoIdForDates === todo.id) {
+        state.selectedTodoIdForDates = null;
+      } else {
+        state.selectedTodoIdForDates = todo.id;
+      }
+      updateUI();
+    });
+
+    textSpan.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      openTodoEditModal(todo.id);
+    });
+    textSpan.title = '클릭: 일정 공유/추가 | 더블클릭: 수정 | 꾹 누르기: 순서 이동';
+    textSpan.style.cursor = 'grab';
+
+    const metaDiv = document.createElement('div');
+    metaDiv.classList.add('todo-item-meta');
+
+    // Important badge
+    if (todo.isImportant) {
+      const importantBadge = document.createElement('span');
+      importantBadge.classList.add('important-badge');
+      importantBadge.innerHTML = '⭐ 중요';
+      metaDiv.appendChild(importantBadge);
+    }
+
+    // Routine tag
+    if (todo.isRoutine) {
+      const routineBadge = document.createElement('span');
+      routineBadge.classList.add('routine-badge');
+      routineBadge.textContent = '루틴';
+      routineBadge.style.cursor = 'pointer';
+      routineBadge.title = '클릭 시 루틴 목록만 보기';
+      routineBadge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleSelectTodoFilterCategory('routine');
+      });
+      metaDiv.appendChild(routineBadge);
+    }
+
+    // Category Badge
+    const badge = document.createElement('span');
+    badge.classList.add('todo-badge');
+    const cat = getCategory(todo.category);
+    if (cat.class) {
+      badge.classList.add(cat.class);
+    } else {
+      badge.style.color = cat.color;
+      badge.style.backgroundColor = hexToRgba(cat.color, 0.1);
+      badge.style.border = `1px solid ${hexToRgba(cat.color, 0.25)}`;
+    }
+    badge.textContent = cat.label;
+    badge.style.cursor = 'pointer';
+    badge.title = `클릭 시 '${cat.label}' 카테고리만 보기`;
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const catKey = Object.keys(state.categories).find(k => k === todo.category || state.categories[k].label === todo.category) || todo.category;
+      handleSelectTodoFilterCategory(catKey);
+    });
+    metaDiv.appendChild(badge);
+
+    // Time Badge
+    if (todo.time) {
+      const timeBadge = document.createElement('span');
+      timeBadge.classList.add('todo-time-badge');
+      timeBadge.innerHTML = `⏰ ${formatTimeKorean(todo.time)}`;
+      metaDiv.appendChild(timeBadge);
+    }
+
+
+
+    itemLeft.appendChild(checkbox);
+    if (state.searchQuery.trim() !== '') {
+      const datePill = document.createElement('span');
+      datePill.classList.add('search-date-pill');
+      datePill.textContent = formatDateKeyToMonthDay(todo.dateKey);
+      datePill.title = `${todo.dateKey}로 이동`;
+      datePill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.selectedDate = todo.dateKey;
+        state.searchQuery = '';
+        const searchInput = document.getElementById('global-search-input');
+        if (searchInput) searchInput.value = '';
+        const clearBtn = document.getElementById('btn-clear-search');
+        if (clearBtn) clearBtn.style.display = 'none';
+        applyPreferences();
+        updateUI();
+      });
+      itemLeft.appendChild(datePill);
+    }
+    itemLeft.insertBefore(checkbox, itemLeft.firstChild);
+    itemLeft.appendChild(textSpan);
+    itemLeft.appendChild(metaDiv);
+    
+    // Memo rendering
+    if (todo.memo && todo.memo.trim() !== '') {
+      const memoDiv = document.createElement('div');
+      memoDiv.className = 'todo-memo-text';
+      memoDiv.innerHTML = linkify(todo.memo).replace(/\n/g, '<br>');
+      itemLeft.appendChild(memoDiv);
+    }
+    
+    // Memo Photos rendering
+    if (todo.memoImages && todo.memoImages.length > 0) {
+      const memoPhotosDiv = document.createElement('div');
+      memoPhotosDiv.style.display = 'flex';
+      memoPhotosDiv.style.flexWrap = 'wrap';
+      memoPhotosDiv.style.gap = '8px';
+      memoPhotosDiv.style.marginTop = '6px';
+      
+      todo.memoImages.forEach((mediaObj, idx) => {
+        const thumb = document.createElement('div');
+        thumb.style.width = '60px';
+        thumb.style.height = '60px';
+        thumb.style.borderRadius = '8px';
+        thumb.style.overflow = 'hidden';
+        thumb.style.border = '1px solid var(--panel-border)';
+        thumb.style.cursor = 'pointer';
+        thumb.style.position = 'relative';
+        
+        const isVideo = mediaObj.type === 'video';
+        if (isVideo) {
+          thumb.style.backgroundColor = 'black';
+        }
+        
+        const mediaContainer = createMediaElementAsync(mediaObj, true, null, null);
+        mediaContainer.style.width = '100%';
+        mediaContainer.style.height = '100%';
+        mediaContainer.style.pointerEvents = 'none'; 
+        thumb.appendChild(mediaContainer);
+        
+        thumb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openLightbox(todo.memoImages, idx, true);
+        });
+        memoPhotosDiv.appendChild(thumb);
+      });
+      itemLeft.appendChild(memoPhotosDiv);
+    }
+
+    if (todo.memoVideos && todo.memoVideos.length > 0) {
+      const memoVideosDiv = document.createElement('div');
+      memoVideosDiv.style.display = 'flex';
+      memoVideosDiv.style.flexWrap = 'wrap';
+      memoVideosDiv.style.gap = '8px';
+      memoVideosDiv.style.marginTop = '6px';
+      
+      todo.memoVideos.forEach((vidObj, idx) => {
+        const thumb = document.createElement('div');
+        thumb.style.width = '60px';
+        thumb.style.height = '60px';
+        thumb.style.borderRadius = '8px';
+        thumb.style.overflow = 'hidden';
+        thumb.style.border = '1px solid var(--panel-border)';
+        thumb.style.cursor = 'pointer';
+        thumb.style.position = 'relative';
+        thumb.style.backgroundColor = 'black'; // background for videos
+        
+        const mediaContainer = createMediaElementAsync(vidObj, true, null, null);
+        mediaContainer.style.width = '100%';
+        mediaContainer.style.height = '100%';
+        mediaContainer.style.pointerEvents = 'none'; 
+        thumb.appendChild(mediaContainer);
+        
+        thumb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openLightbox(todo.memoVideos, idx, true);
+        });
+        memoVideosDiv.appendChild(thumb);
+      });
+      itemLeft.appendChild(memoVideosDiv);
+    }
+
+    // Memo Drawing rendering
+    // Memo Drawing rendering
+    if (hasDrawingData(todo.memoDrawing)) {
+      const drawingToggleBtn = document.createElement('div');
+      drawingToggleBtn.className = 'record-drawing-toggle';
+      drawingToggleBtn.innerHTML = '🖼️ 첨부된 그림 보기 (클릭)';
+      drawingToggleBtn.style.cssText = 'cursor:pointer; color:#3b82f6; font-size:0.85rem; margin-top:6px; padding:6px; background:var(--panel-bg, rgba(255,255,255,0.05)); border-radius:4px; text-align:center; border: 1px dashed var(--panel-border, #333);';
+      itemLeft.appendChild(drawingToggleBtn);
+
+      const viewDrawingContainer = document.createElement('div');
+      viewDrawingContainer.className = 'diary-drawing-container view-mode';
+      viewDrawingContainer.style.marginTop = '6px';
+      viewDrawingContainer.style.width = '100%';
+      viewDrawingContainer.style.display = 'none';
+      itemLeft.appendChild(viewDrawingContainer);
+
+      drawingToggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        drawingToggleBtn.style.display = 'none';
+        viewDrawingContainer.style.display = 'block';
+        new NeonDrawingBoard(viewDrawingContainer, {
+          initialData: todo.memoDrawing,
+          readOnly: true
+        });
+      });
+      
+      viewDrawingContainer.style.cursor = 'pointer';
+      viewDrawingContainer.title = '클릭하여 곧바로 그림 수정하기';
+      const openDirectEdit = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        openFullscreenDrawing(todo.memoDrawing, (data) => {
+          todo.memoDrawing = data;
+          saveTodos();
+          renderTodos();
+        });
+      };
+      viewDrawingContainer.addEventListener('click', openDirectEdit);
+      viewDrawingContainer.addEventListener('contextmenu', openDirectEdit);
+    }
+
+    // Memo Audio rendering
+    if (todo.memoAudio && todo.memoAudio.length > 0) {
+      const audioViewContainer = document.createElement('div');
+      audioViewContainer.className = 'audio-previews-container';
+      audioViewContainer.style.marginTop = '6px';
+      audioViewContainer.style.width = '100%';
+      
+      itemLeft.appendChild(audioViewContainer);
+      
+      setTimeout(() => {
+        renderAudioPreviews(audioViewContainer.id || (audioViewContainer.id = `view-audio-todo-${todo.id}`), todo.memoAudio, null);
+      }, 0);
+    }
+
+    // Action buttons container
+    const actionBtns = document.createElement('div');
+    actionBtns.classList.add('todo-action-btns');
+
+    // Star / Important Button
+    const starBtn = document.createElement('button');
+    starBtn.type = 'button';
+    starBtn.className = `todo-star-btn ${todo.isImportant ? 'active' : ''}`;
+    starBtn.innerHTML = todo.isImportant ? '⭐' : '☆';
+    starBtn.title = todo.isImportant ? '중요 표시 해제' : '중요 표시 (상단 고정)';
+    starBtn.ariaLabel = todo.isImportant ? '중요 표시 해제' : '중요 표시';
+    starBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleTodoImportant(todo.id, todo.dateKey || state.selectedDate);
+    });
+
+    // Edit button
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.classList.add('edit-btn');
+    editBtn.innerHTML = '✏️';
+    editBtn.ariaLabel = '할 일 수정';
+    editBtn.title = '수정';
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTodoEditModal(todo.id);
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.classList.add('delete-btn');
+    deleteBtn.innerHTML = '✖';
+    deleteBtn.ariaLabel = '할 일 삭제';
+    deleteBtn.addEventListener('click', () => deleteTodo(todo.id, todo.text, todo.isRoutine));
+
+    actionBtns.appendChild(starBtn);
+    actionBtns.appendChild(editBtn);
+    actionBtns.appendChild(deleteBtn);
+
+    const itemMain = document.createElement('div');
+    itemMain.classList.add('todo-item-main');
+    itemMain.appendChild(itemLeft);
+    itemMain.appendChild(actionBtns);
+    item.appendChild(itemMain);
+
+    if (state.selectedTodoIdForDates === todo.id) {
+      const datesPanel = document.createElement('div');
+      datesPanel.classList.add('todo-dates-panel');
+
+      if (todo.createdAt) {
+        const createdInfo = document.createElement('div');
+        createdInfo.style.fontSize = '0.75rem';
+        createdInfo.style.color = 'var(--text-muted)';
+        createdInfo.style.marginBottom = '12px';
+        const cDate = new Date(todo.createdAt);
+        const yy = String(cDate.getFullYear()).slice(2);
+        const mm = String(cDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(cDate.getDate()).padStart(2, '0');
+        createdInfo.innerHTML = `📅 등록일: ${yy}.${mm}.${dd}`;
+        datesPanel.appendChild(createdInfo);
+      }
+
+      const panelTitle = document.createElement('div');
+      panelTitle.classList.add('todo-dates-title');
+      panelTitle.textContent = '함께 계획된 날짜:';
+      datesPanel.appendChild(panelTitle);
+
+      const tagsContainer = document.createElement('div');
+      tagsContainer.classList.add('todo-dates-tags');
+
+      const otherDates = findOtherDatesForTodo(todo.text);
+      otherDates.forEach(dk => {
+        const tag = document.createElement('span');
+        tag.classList.add('todo-date-tag');
+        if (dk === state.selectedDate) tag.classList.add('current');
+        tag.textContent = formatDateKeyToMonthDay(dk);
+
+        const removeTagBtn = document.createElement('span');
+        removeTagBtn.className = 'remove-tag-btn';
+        removeTagBtn.innerHTML = '&times;';
+        removeTagBtn.title = '이 날짜에서 삭제';
+        removeTagBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeTodoFromDate(todo.text, dk);
+        });
+        tag.appendChild(removeTagBtn);
+        tagsContainer.appendChild(tag);
+      });
+
+      datesPanel.appendChild(tagsContainer);
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.classList.add('todo-copy-btn');
+      if (state.copyingTodoId === todo.id) {
+        copyBtn.classList.add('copying');
+        copyBtn.innerHTML = '🎯 달력에서 복사할 날짜 선택 중... (완료하려면 클릭)';
+      } else {
+        copyBtn.innerHTML = '➕ 다른 날짜에 추가하기';
+      }
+      copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.copyingTodoId === todo.id) {
+          state.copyingTodoId = null;
+        } else {
+          state.copyingTodoId = todo.id;
+        }
+        updateUI();
+      });
+      datesPanel.appendChild(copyBtn);
+
+      item.appendChild(datesPanel);
+    }
+
+    todoItemsList.appendChild(item);
+  });
+
+  
+}
+
+// Run init on window load
+window.addEventListener('DOMContentLoaded', init);
+window.addEventListener('resize', () => {
+  applyLayoutSectionOrder();
+});
+
+// Setup floating tabs behavior
+function setupScrollFloatingTabs() {
+  const historyControls = document.getElementById('floating-history-controls');
+  if (!historyControls) return;
+  
+  window.addEventListener('scroll', () => {
+    if (state.showHistoryControls !== false && window.scrollY > 120) {
+      historyControls.classList.add('visible');
+    } else {
+      historyControls.classList.remove('visible');
+    }
+  }, { passive: true });
+}
+
+// Register Service Worker for PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(registration => {
+        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+      })
+      .catch(error => {
+        console.error('ServiceWorker registration failed: ', error);
+      });
+  });
+}
+
+// Local Backup & Restore Logic (Base64 Data URI for PWA compatibility)
+function setupLocalBackup() {
+  const btnLocalBackup = document.getElementById('btn-local-backup');
+  const localRestoreInput = document.getElementById('local-restore-input');
+
+  if (btnLocalBackup) {
+    btnLocalBackup.addEventListener('click', () => {
+      try {
+        const backupData = {
+          todos: state.todos,
+          routines: state.routines,
+          routinesPopulatedDates: state.routinesPopulatedDates,
+          categories: state.categories,
+          diaries: state.diaries,
+          ddays: state.ddays,
+          appTitle: state.appTitle,
+          tabIcons: state.tabIcons
+        };
+        const jsonString = JSON.stringify(backupData);
+        
+        // Use Base64 Data URI to avoid "Access Blocked" on Android WebViews/PWAs
+        const base64Str = btoa(unescape(encodeURIComponent(jsonString)));
+        const encodedUri = "data:application/json;base64," + base64Str;
+        
+        const downloadLink = document.createElement("a");
+        downloadLink.href = encodedUri;
+        downloadLink.download = "neon_planner_backup.json";
+        
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+      } catch (err) {
+        alert("백업 파일 생성 중 오류가 발생했습니다: " + err.message);
+      }
+    });
+  }
+
+  if (localRestoreInput) {
+    localRestoreInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        try {
+          const content = event.target.result;
+          const parsedData = JSON.parse(content);
+
+          if (!confirm('선택한 백업 파일로 모든 데이터를 복구하시겠습니까?\n현재 데이터는 모두 덮어씌워집니다.')) {
+            localRestoreInput.value = '';
+            return;
+          }
+
+          // Restore state
+          if (parsedData.todos) state.todos = parsedData.todos;
+          if (parsedData.routines) state.routines = parsedData.routines;
+          if (parsedData.routinesPopulatedDates) state.routinesPopulatedDates = parsedData.routinesPopulatedDates;
+          if (parsedData.categories) state.categories = parsedData.categories;
+          if (parsedData.diaries) state.diaries = parsedData.diaries;
+          if (parsedData.ddays) state.ddays = parsedData.ddays;
+          if (parsedData.appTitle) state.appTitle = parsedData.appTitle;
+          if (parsedData.tabIcons) state.tabIcons = parsedData.tabIcons;
+
+          // Save to LocalStorage
+          localStorage.setItem('neon_planner_todos', JSON.stringify(state.todos));
+          localStorage.setItem('neon_planner_routines', JSON.stringify(state.routines));
+          localStorage.setItem('neon_planner_populated_dates', JSON.stringify(state.routinesPopulatedDates));
+          localStorage.setItem('neon_planner_categories', JSON.stringify(state.categories));
+          localStorage.setItem('neon_planner_diaries', JSON.stringify(state.diaries));
+          localStorage.setItem('neon_planner_ddays', JSON.stringify(state.ddays));
+          if (state.appTitle) localStorage.setItem('neon_planner_app_title', state.appTitle);
+          if (state.tabIcons) localStorage.setItem('neon_planner_tab_icons', JSON.stringify(state.tabIcons));
+
+          alert('로컬 백업 복원이 완료되었습니다! 화면을 새로고침합니다.');
+          location.reload();
+        } catch (err) {
+          alert('백업 파일을 읽는 중 오류가 발생했습니다. 올바른 파일인지 확인해주세요.\n' + err.message);
+        }
+        localRestoreInput.value = ''; // reset
+      };
+      reader.readAsText(file);
+    });
+  }
+}
+
+document.addEventListener('DOMContentLoaded', setupLocalBackup);
+
+function setupHeaderGDriveSync() {
+  const hLogin = document.getElementById('btn-header-gdrive-login');
+  const hBackup = document.getElementById('btn-header-gdrive-backup');
+  const hRestore = document.getElementById('btn-header-gdrive-restore');
+  const hLogout = document.getElementById('btn-header-gdrive-logout');
+  
+  const mLogin = document.getElementById('btn-gdrive-login');
+  const mBackup = document.getElementById('btn-gdrive-backup');
+  const mRestore = document.getElementById('btn-gdrive-restore');
+  const mLogout = document.getElementById('btn-gdrive-logout');
+
+  if (hLogin && mLogin) hLogin.addEventListener('click', () => mLogin.click());
+  if (hBackup && mBackup) hBackup.addEventListener('click', () => mBackup.click());
+  if (hRestore && mRestore) hRestore.addEventListener('click', () => mRestore.click());
+  if (hLogout && mLogout) hLogout.addEventListener('click', () => mLogout.click());
+
+  setInterval(() => {
+    if (mBackup && hBackup) hBackup.disabled = mBackup.disabled;
+    if (mRestore && hRestore) hRestore.disabled = mRestore.disabled;
+    if (mLogout && hLogout) hLogout.style.display = mLogout.style.display;
+
+    if (hLogin && mLogout) {
+      if (mLogout.style.display !== 'none') {
+        // Connected
+        hLogin.style.borderColor = '#fbbf24'; // Yellow matching key icon
+        hLogin.style.borderWidth = '2px';
+      } else {
+        // Not connected
+        hLogin.style.borderColor = 'var(--panel-border)';
+        hLogin.style.borderWidth = '1px';
+      }
+    }
+  }, 300);
+}
+
+document.addEventListener('DOMContentLoaded', setupHeaderGDriveSync);
+
+window.addEventListener('online', () => {
+  if (localStorage.getItem('neon_planner_gdrive_connected') === 'true' && typeof autoSyncWithDrive === 'function') {
+    const badge = document.getElementById('gdrive-status-badge');
+    if (badge) {
+      badge.textContent = '🌐 인터넷 재연결됨...';
+    }
+    setTimeout(autoSyncWithDrive, 1000);
+  }
+});
+
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (localStorage.getItem('neon_planner_gdrive_connected') === 'true' && typeof autoSyncWithDrive === 'function') {
+      autoSyncWithDrive();
+    }
+  }
+});
+
+window.addEventListener('focus', () => {
+  if (localStorage.getItem('neon_planner_gdrive_connected') === 'true' && typeof autoSyncWithDrive === 'function') {
+    autoSyncWithDrive();
+  }
+});
+
+function initVoiceAssistant() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  
+  if (!SpeechRecognition) {
+    console.warn("Speech Recognition API is not supported in this browser.");
+    const globalBtn = document.getElementById('btn-global-mic');
+    if (globalBtn) globalBtn.style.display = 'none';
+    const dictBtns = document.querySelectorAll('.dictation-btn');
+    dictBtns.forEach(b => b.style.display = 'none');
+    return;
+  }
+
+  const globalMic = document.getElementById('btn-global-mic');
+  const voiceOverlay = document.getElementById('voice-overlay');
+  const voiceStatusText = document.getElementById('voice-status-text');
+  const btnVoiceCancel = document.getElementById('btn-voice-cancel');
+  
+  const dictTodo = document.getElementById('btn-dictate-todo');
+  const dictRecord = document.getElementById('btn-dictate-record');
+  
+  let currentTargetInput = null; // Either a specific input element, or null for global commands
+  
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'ko-KR';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  // We will dynamically set continuous based on mode
+
+  const startListening = (targetInput) => {
+    currentTargetInput = targetInput;
+    recognition.continuous = !targetInput; // Continuous for global mic, single for dictation
+
+    try {
+      recognition.start();
+    } catch (e) {} // Ignore if already started
+    
+    if (targetInput) {
+      if (targetInput === document.getElementById('todo-input-field') && dictTodo) {
+        dictTodo.classList.add('listening');
+      } else if (targetInput === document.getElementById('new-record-text') && dictRecord) {
+        dictRecord.classList.add('listening');
+      }
+    } else {
+      if (voiceOverlay) voiceOverlay.classList.remove('hidden');
+      if (voiceStatusText) voiceStatusText.textContent = '듣고 있습니다...';
+    }
+  };
+
+  const stopListeningUI = () => {
+    if (dictTodo) dictTodo.classList.remove('listening');
+    if (dictRecord) dictRecord.classList.remove('listening');
+    if (voiceOverlay) voiceOverlay.classList.add('hidden');
+  };
+
+  recognition.onend = () => {
+    stopListeningUI();
+  };
+
+  recognition.onerror = (event) => {
+    console.error("Speech recognition error", event.error);
+    if (!currentTargetInput && voiceStatusText) {
+      voiceStatusText.textContent = '오류가 발생했습니다. 다시 시도해주세요.';
+      setTimeout(stopListeningUI, 1500);
+    } else {
+      stopListeningUI();
+    }
+  };
+
+  recognition.onresult = (event) => {
+    const current = event.resultIndex;
+    const transcript = event.results[current][0].transcript;
+    
+    if (currentTargetInput) {
+      // Dictation mode
+      currentTargetInput.value = (currentTargetInput.value + ' ' + transcript).trim();
+      stopListeningUI();
+    } else {
+      // Global Command Mode
+      if (voiceStatusText) voiceStatusText.textContent = `"${transcript}"`;
+      
+      handleVoiceCommand(transcript, recognition, stopListeningUI);
+    }
+  };
+
+  // Button Events
+  if (globalMic) {
+    globalMic.addEventListener('click', () => {
+      startListening(null);
+    });
+  }
+  
+  if (btnVoiceCancel) {
+    btnVoiceCancel.addEventListener('click', () => {
+      recognition.stop();
+      stopListeningUI();
+    });
+  }
+  
+  // Note: dictTodo and dictRecord handlers have been replaced by handleAudioDictateClick
+}
+
+function handleVoiceCommand(transcript, recognition, stopListeningUI) {
+  const t = transcript.toLowerCase().trim();
+  
+  if (t.includes('종료') || t.includes('그만') || t.includes('닫아') || t.includes('끝내')) {
+    if (recognition) recognition.stop();
+    if (stopListeningUI) stopListeningUI();
+    return;
+  }
+  
+  // Navigation commands (No return, so it can chain with '추가')
+  if (t.includes('할 일 탭') || t.includes('할일 탭') || t.includes('할일 열어') || t.includes('할 일 열어') || t.includes('투두')) {
+    const btn = document.getElementById('btn-toggle-todos');
+    if (btn && !btn.classList.contains('active-view')) btn.click();
+  } else if (t.includes('분석') || t.includes('통계')) {
+    const btn = document.getElementById('btn-toggle-analytics');
+    if (btn && !btn.classList.contains('active-view')) btn.click();
+  } else if (t.includes('달력') || t.includes('캘린더')) {
+    const btn = document.getElementById('btn-toggle-calendar');
+    if (btn && !btn.classList.contains('active-view')) btn.click();
+  } else if (t.includes('기록') || t.includes('일기')) {
+    const btn = document.getElementById('btn-toggle-records');
+    if (btn && !btn.classList.contains('active-view')) btn.click();
+  } else if (t.includes('루틴')) {
+    const btn = document.getElementById('btn-toggle-routines');
+    if (btn && !btn.classList.contains('active-view')) btn.click();
+  } else if (t.includes('설정')) {
+    const btn = document.getElementById('btn-toggle-control-panel');
+    if (btn && !btn.classList.contains('active-view')) btn.click();
+  }
+  
+  // Adding Command (Todo, Routine, Record, D-day)
+  if (t.includes('추가') || t.includes('넣어') || t.includes('저장')) {
+    const textToParse = t.replace(/할\s*일에?/gi, '')
+                         .replace(/일정에?/gi, '')
+                         .replace(/루틴\s*관리에?/gi, '')
+                         .replace(/루팅\s*관리에?/gi, '')
+                         .replace(/루틴\s*관리의?/gi, '')
+                         .replace(/루팅\s*관리의?/gi, '')
+                         .replace(/루틴\s*관리해서?/gi, '')
+                         .replace(/루팅\s*관리해서?/gi, '')
+                         .replace(/루틴[의에]?/gi, '')
+                         .replace(/루팅[의에]?/gi, '')
+                         .replace(/기록에?/gi, '')
+                         .replace(/일기에?/gi, '')
+                         .replace(/디데이에?/gi, '')
+                         .replace(/기념일에?/gi, '')
+                         .replace(/추가해\s*주세요/gi, '')
+                         .replace(/저장해\s*주세요/gi, '')
+                         .replace(/넣어\s*주세요/gi, '')
+                         .replace(/추가해?/gi, '')
+                         .replace(/저장해?/gi, '')
+                         .replace(/저장/gi, '')
+                         .replace(/넣어줘?/gi, '')
+                         .replace(/주세요/gi, '')
+                         .replace(/부탁해/gi, '')
+                         .replace(/할\s*일\s*탭\s*열고/gi, '')
+                         .replace(/할\s*일\s*탭\s*열어주고/gi, '')
+                         .trim();
+                         
+    if (textToParse) {
+      const parsed = parseNaturalLanguageTodo(textToParse);
+      
+      const isRoutine = t.includes('루틴') || t.includes('루팅');
+      const isRecord = t.includes('기록') || t.includes('일기');
+      const isDday = t.includes('디데이') || t.includes('기념일');
+
+      pushToHistory();
+
+      if (isRoutine) {
+        state.routines.push({
+          id: Date.now(),
+          text: parsed.cleanedText,
+          category: 'other',
+          startDate: parsed.dateKey,
+          endDate: ''
+        });
+        saveRoutines();
+        // Immediately populate so it shows up in today's to-do list like normal routines
+        if (typeof populateRoutinesForDate === 'function') {
+          populateRoutinesForDate(state.selectedDate, true);
+        }
+        if (typeof initRoutinesPanel === 'function') initRoutinesPanel();
+        updateUI();
+      } else if (isRecord) {
+        if (!state.diaries[parsed.dateKey]) {
+          state.diaries[parsed.dateKey] = [];
+        }
+        state.diaries[parsed.dateKey].push({
+          id: Date.now(),
+          text: parsed.cleanedText,
+          images: [],
+          timestamp: parsed.time || Date.now()
+        });
+        saveDiaries();
+        if (typeof renderRecordCards === 'function') renderRecordCards();
+      } else if (isDday) {
+        state.ddays.push({
+          id: Date.now(),
+          title: parsed.cleanedText,
+          targetDate: parsed.dateKey
+        });
+        saveDdayData();
+        if (typeof renderDdays === 'function') renderDdays();
+      } else {
+        // Default to Todo
+        if (!state.todos[parsed.dateKey]) {
+          state.todos[parsed.dateKey] = [];
+        }
+        state.todos[parsed.dateKey].push({
+          id: Date.now(),
+          text: parsed.cleanedText,
+          category: 'other',
+          completed: false,
+          time: parsed.time || ''
+        });
+        saveTodos();
+        updateUI();
+      }
+      
+      // Visual feedback without blocking alert
+      const statusText = document.getElementById('voice-status-text');
+      let targetName = isRoutine ? '루틴' : (isRecord ? '기록' : (isDday ? '디데이' : '할 일'));
+      if (statusText) {
+        statusText.textContent = `✅ [${targetName}] 추가됨: ${parsed.cleanedText}`;
+      }
+      
+      // Auto-close voice assistant after a successful save
+      setTimeout(() => {
+        if (recognition) recognition.stop();
+        if (stopListeningUI) stopListeningUI();
+      }, 1500);
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', initVoiceAssistant);
+
+
+
+// Helper to render media async (Image, Video, PDF)
+function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
+  const container = document.createElement('div');
+  container.className = isEditMode ? 'thumb-img-wrapper' : 'media-view-wrapper';
+  container.style.position = 'relative';
+  container.style.display = 'flex';
+  container.style.alignItems = 'center';
+  container.style.justifyContent = 'center';
+  container.style.overflow = 'hidden';
+  if (!isEditMode) container.style.height = '100%';
+
+  if (isEditMode && onRemove) {
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'delete-thumb-btn';
+    delBtn.innerHTML = '&times;';
+    delBtn.style.position = 'absolute';
+    delBtn.style.top = '4px';
+    delBtn.style.right = '4px';
+    delBtn.style.zIndex = '10';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onRemove();
+    });
+    container.appendChild(delBtn);
+  }
+
+  if (typeof mediaObj === 'string') {
+    mediaObj = { src: mediaObj, type: 'image' };
+  }
+
+  if (!mediaObj.type || mediaObj.type === 'image' || mediaObj.src) {
+    const img = document.createElement('img');
+    img.src = mediaObj.src;
+    if (mediaObj.rotate !== undefined) img.style = getImageStyle(mediaObj);
+    if (!isEditMode) {
+      img.style.cursor = 'pointer';
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'cover';
+    } else {
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'cover';
+    }
+    img.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (onClick) onClick();
+    });
+    container.appendChild(img);
+  } else if (mediaObj.type === 'video' || mediaObj.type === 'pdf') {
+    const loading = document.createElement('div');
+    loading.textContent = '...';
+    loading.style.color = '#fff';
+    container.appendChild(loading);
+
+    FileDB.getFile(mediaObj.fileId).then(fileRecord => {
+      container.removeChild(loading);
+      if (!fileRecord || !fileRecord.blob) {
+        const err = document.createElement('div');
+        err.textContent = '❌';
+        container.appendChild(err);
+        return;
+      }
+      
+      const blobUrl = URL.createObjectURL(fileRecord.blob);
+      if (mediaObj.type === 'video') {
         const vid = document.createElement('video');
         vid.src = blobUrl;
+        vid.controls = true;
         vid.style.width = '100%';
         vid.style.height = '100%';
         vid.style.objectFit = 'cover';
-        vid.preload = 'metadata';
-
         if (isEditMode) {
            vid.controls = false;
-           vid.muted = true;
-           vid.playsInline = true;
-           
-           const playIcon = document.createElement('div');
-           playIcon.innerHTML = '▶';
-           playIcon.style.position = 'absolute';
-           playIcon.style.top = '50%';
-           playIcon.style.left = '50%';
-           playIcon.style.transform = 'translate(-50%, -50%)';
-           playIcon.style.color = 'white';
-           playIcon.style.fontSize = '24px';
-           playIcon.style.textShadow = '0 2px 4px rgba(0,0,0,0.5)';
-           playIcon.style.pointerEvents = 'none';
-           container.appendChild(playIcon);
-        } else {
-           vid.controls = true;
         }
-
-        vid.addEventListener('loadeddata', () => {
-           vid.currentTime = 0.1; // Seek to first frame
-        });
-
         container.appendChild(vid);
       } else if (mediaObj.type === 'pdf') {
         const pdfBtn = document.createElement('button');
@@ -5124,63 +8469,31 @@ const GDriveMediaSync = {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return;
     try {
       const boundary = 'neon_planner_media_boundary';
-      
-      const metadata = {
-        name: 'neon_media_' + id,
-        mimeType: blob.type,
-        parents: ['appDataFolder'],
-        appProperties: { fileId: id, type: type || '', name: name || '' }
-      };
-
+      const metadata = { name: 'neon_media_' + id, mimeType: blob.type, parents: ['appDataFolder'], appProperties: { fileId: id, type: type || '', name: name || '' } };
       const arrayBuffer = await blob.arrayBuffer();
-      
       const metadataStr = JSON.stringify(metadata);
       const bodyPrefix = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + metadataStr + '\r\n--' + boundary + '\r\nContent-Type: ' + blob.type + '\r\n\r\n';
       const bodySuffix = '\r\n--' + boundary + '--';
-      
       const encoder = new TextEncoder();
-      const prefixBuf = encoder.encode(bodyPrefix);
-      const suffixBuf = encoder.encode(bodySuffix);
-      
-      const fullBlob = new Blob([prefixBuf, arrayBuffer, suffixBuf], { type: 'multipart/related; boundary=' + boundary });
-      
-      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + gdriveAccessToken },
-        body: fullBlob
-      });
-    } catch (e) { console.error('Media upload failed:', e); }
+      const fullBlob = new Blob([encoder.encode(bodyPrefix), arrayBuffer, encoder.encode(bodySuffix)], { type: 'multipart/related; boundary=' + boundary });
+      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }, body: fullBlob });
+    } catch (e) { console.error(e); }
   },
-  
   async downloadMedia(id) {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return null;
     try {
-      const searchUrl = "https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)";
-      const searchRes = await fetch(searchUrl, { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+      const searchRes = await fetch("https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
       if (!searchRes.ok) return null;
       const searchData = await searchRes.json();
       const file = searchData.files && searchData.files[0];
       if (!file) return null;
-      
-      const contentUrl = "https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media";
-      const contentRes = await fetch(contentUrl, { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+      const contentRes = await fetch("https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
       if (!contentRes.ok) return null;
       const blob = await contentRes.blob();
-      
-      return { 
-        id, 
-        blob, 
-        type: file.appProperties?.type || 'unknown', 
-        name: file.appProperties?.name || '', 
-        timestamp: Date.now() 
-      };
-    } catch (e) {
-      console.error('Media download failed:', e);
-      return null;
-    }
+      return { id, blob, type: file.appProperties?.type || 'unknown', name: file.appProperties?.name || '', timestamp: Date.now() };
+    } catch (e) { return null; }
   }
 };
-
 const FileDB = {
   db: null,
   init() {
@@ -5188,18 +8501,10 @@ const FileDB = {
       const request = indexedDB.open("PlaneerFileDB", 1);
       request.onupgradeneeded = (e) => {
         const db = e.target.result;
-        if (!db.objectStoreNames.contains("files")) {
-          db.createObjectStore("files", { keyPath: "id" });
-        }
+        if (!db.objectStoreNames.contains("files")) db.createObjectStore("files", { keyPath: "id" });
       };
-      request.onsuccess = (e) => {
-        this.db = e.target.result;
-        resolve();
-      };
-      request.onerror = (e) => {
-        console.error("FileDB init error:", e);
-        reject(e);
-      };
+      request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
+      request.onerror = (e) => { reject(e); };
     });
   },
   async saveFile(blob, type, name) {
@@ -5222,14 +8527,10 @@ const FileDB = {
       request.onsuccess = () => resolve(request.result);
       request.onerror = (e) => reject(e);
     });
-    
     if (!record && typeof gdriveAccessToken !== 'undefined' && gdriveAccessToken) {
        record = await GDriveMediaSync.downloadMedia(id);
        if (record) {
-         try {
-           const tx = this.db.transaction("files", "readwrite");
-           tx.objectStore("files").put(record);
-         } catch(e) {}
+         try { const tx = this.db.transaction("files", "readwrite"); tx.objectStore("files").put(record); } catch(e) {}
        }
     }
     return record;
@@ -5275,6 +8576,7 @@ const AudioRecorder = {
           }
         }
         this.lastInterim = interim;
+        }
         if (this.onProgress) {
           this.onProgress(this.finalTranscript + interim);
         }
@@ -5292,12 +8594,12 @@ const AudioRecorder = {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          sampleRate: 96000 /* High quality */,
+          sampleRate: 48000,
           channelCount: 2
         } 
       });
       
-      const options = { audioBitsPerSecond: 320000 };
+      const options = { audioBitsPerSecond: 128000 };
       if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
         options.mimeType = 'audio/webm;codecs=opus';
       } else if (MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a.40.2')) {
