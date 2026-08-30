@@ -5119,6 +5119,68 @@ function renderMediaToContainer(mediaObj, container, onClick) {
 }
 
 // ====== FILE DB (IndexedDB) ======
+const GDriveMediaSync = {
+  async uploadMedia(id, blob, type, name) {
+    if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return;
+    try {
+      const boundary = 'neon_planner_media_boundary';
+      
+      const metadata = {
+        name: 'neon_media_' + id,
+        mimeType: blob.type,
+        parents: ['appDataFolder'],
+        appProperties: { fileId: id, type: type || '', name: name || '' }
+      };
+
+      const arrayBuffer = await blob.arrayBuffer();
+      
+      const metadataStr = JSON.stringify(metadata);
+      const bodyPrefix = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + metadataStr + '\r\n--' + boundary + '\r\nContent-Type: ' + blob.type + '\r\n\r\n';
+      const bodySuffix = '\r\n--' + boundary + '--';
+      
+      const encoder = new TextEncoder();
+      const prefixBuf = encoder.encode(bodyPrefix);
+      const suffixBuf = encoder.encode(bodySuffix);
+      
+      const fullBlob = new Blob([prefixBuf, arrayBuffer, suffixBuf], { type: 'multipart/related; boundary=' + boundary });
+      
+      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + gdriveAccessToken },
+        body: fullBlob
+      });
+    } catch (e) { console.error('Media upload failed:', e); }
+  },
+  
+  async downloadMedia(id) {
+    if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return null;
+    try {
+      const searchUrl = "https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)";
+      const searchRes = await fetch(searchUrl, { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+      if (!searchRes.ok) return null;
+      const searchData = await searchRes.json();
+      const file = searchData.files && searchData.files[0];
+      if (!file) return null;
+      
+      const contentUrl = "https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media";
+      const contentRes = await fetch(contentUrl, { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+      if (!contentRes.ok) return null;
+      const blob = await contentRes.blob();
+      
+      return { 
+        id, 
+        blob, 
+        type: file.appProperties?.type || 'unknown', 
+        name: file.appProperties?.name || '', 
+        timestamp: Date.now() 
+      };
+    } catch (e) {
+      console.error('Media download failed:', e);
+      return null;
+    }
+  }
+};
+
 const FileDB = {
   db: null,
   init() {
@@ -5143,21 +5205,34 @@ const FileDB = {
   async saveFile(blob, type, name) {
     if (!this.db) await this.init();
     const id = 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-    return new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       const tx = this.db.transaction("files", "readwrite");
       tx.objectStore("files").put({ id, blob, type, name, timestamp: Date.now() });
-      tx.oncomplete = () => resolve(id);
+      tx.oncomplete = () => resolve();
       tx.onerror = (e) => reject(e);
     });
+    GDriveMediaSync.uploadMedia(id, blob, type, name);
+    return id;
   },
   async getFile(id) {
     if (!this.db) await this.init();
-    return new Promise((resolve, reject) => {
+    let record = await new Promise((resolve, reject) => {
       const tx = this.db.transaction("files", "readonly");
       const request = tx.objectStore("files").get(id);
       request.onsuccess = () => resolve(request.result);
       request.onerror = (e) => reject(e);
     });
+    
+    if (!record && typeof gdriveAccessToken !== 'undefined' && gdriveAccessToken) {
+       record = await GDriveMediaSync.downloadMedia(id);
+       if (record) {
+         try {
+           const tx = this.db.transaction("files", "readwrite");
+           tx.objectStore("files").put(record);
+         } catch(e) {}
+       }
+    }
+    return record;
   },
   async deleteFile(id) {
     if (!this.db) await this.init();

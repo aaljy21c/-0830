@@ -12,6 +12,8 @@ class NeonDrawingBoard {
     this.pdfFileId = null;
     this._pages = [{ type: 'blank', _strokes: [], bgCanvas: null }];
     this.currentPageIndex = 0;
+    this.layoutMode = localStorage.getItem('planeer_drawing_mode') || 'paged';
+    this.pageHeight = 1130; // Virtual page height
     
     Object.defineProperty(this, 'strokes', {
       get: () => this._pages[this.currentPageIndex]._strokes,
@@ -162,6 +164,9 @@ class NeonDrawingBoard {
         <button class="tool-btn" data-tool="highlighter" title="형광펜">🖍️</button>
         <button class="tool-btn" data-tool="eraser" title="지우개">🧽</button>
         <button class="tool-btn" data-tool="lasso" title="올가미 선택">✂️</button>
+        <div class="tool-divider"></div>
+        <button type="button" id="btn-layout-mode" class="drawing-tool-btn" title="모드 전환 (현재: 페이지)" style="font-size: 1.1rem;">📄</button>
+        <button type="button" id="btn-drawing-close" class="drawing-tool-btn" title="닫기">❌</button>
       </div>
       <div class="drawing-settings">
         <!-- Settings dynamically change based on tool -->
@@ -252,7 +257,7 @@ class NeonDrawingBoard {
     
     const btnExportPdf = this.toolbar.querySelector('#btn-export-pdf');
     if (btnExportPdf) {
-      if (this.isMultiPage) {
+      if (this.isMultiPage || this.layoutMode === 'paged') {
         btnExportPdf.style.display = 'inline-block';
       }
       btnExportPdf.addEventListener('click', async (e) => {
@@ -264,53 +269,94 @@ class NeonDrawingBoard {
           const { PDFDocument } = window.PDFLib;
           const pdfDoc = await PDFDocument.create();
           
-          for (let i = 0; i < this._pages.length; i++) {
-            const pageObj = this._pages[i];
-            
-            // Create a temp canvas matching the page size
-            const tempCanvas = document.createElement('canvas');
-            const targetWidth = pageObj.width || this.canvas.width;
-            const targetHeight = pageObj.height || this.canvas.height;
-            tempCanvas.width = targetWidth;
-            tempCanvas.height = targetHeight;
-            const tempCtx = tempCanvas.getContext('2d');
-            
-            // Draw background
-            if (pageObj.bgCanvas) {
-               tempCtx.drawImage(pageObj.bgCanvas, 0, 0, targetWidth, targetHeight);
-            } else {
-               tempCtx.fillStyle = this.bgColor;
-               tempCtx.fillRect(0, 0, targetWidth, targetHeight);
-            }
-            
-            // Draw strokes
-            pageObj._strokes.forEach(stroke => {
-              tempCtx.beginPath();
-              tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
-              tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
+          
+          const pageWidth = this.canvas.width / window.devicePixelRatio;
+          const pageHeight = this.pageHeight || 1130;
+          const pageGap = 20;
+
+          if (this.isMultiPage) {
+            for (let i = 0; i < this._pages.length; i++) {
+              const pageObj = this._pages[i];
               
-              if (stroke.tool === 'highlighter') {
-                tempCtx.globalCompositeOperation = 'multiply';
+              const tempCanvas = document.createElement('canvas');
+              const targetWidth = pageObj.width || this.canvas.width;
+              const targetHeight = pageObj.height || this.canvas.height;
+              tempCanvas.width = targetWidth;
+              tempCanvas.height = targetHeight;
+              const tempCtx = tempCanvas.getContext('2d');
+              
+              if (pageObj.bgCanvas) {
+                 tempCtx.drawImage(pageObj.bgCanvas, 0, 0, targetWidth, targetHeight);
+              } else {
+                 tempCtx.fillStyle = this.bgColor;
+                 tempCtx.fillRect(0, 0, targetWidth, targetHeight);
               }
               
-              stroke.points.forEach((pt, j) => {
-                if (j===0) tempCtx.moveTo(pt.x, pt.y); else tempCtx.lineTo(pt.x, pt.y);
+              pageObj._strokes.forEach(stroke => {
+                tempCtx.beginPath();
+                tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
+                tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
+                
+                if (stroke.tool === 'highlighter') {
+                  tempCtx.globalCompositeOperation = 'multiply';
+                }
+                
+                stroke.points.forEach((pt, j) => {
+                  if (j===0) tempCtx.moveTo(pt.x, pt.y); else tempCtx.lineTo(pt.x, pt.y);
+                });
+                tempCtx.stroke();
+                tempCtx.globalCompositeOperation = 'source-over';
               });
-              tempCtx.stroke();
-              tempCtx.globalCompositeOperation = 'source-over';
+              
+              const pngDataUrl = tempCanvas.toDataURL('image/png');
+              const pngImage = await pdfDoc.embedPng(pngDataUrl);
+              const pdfPage = pdfDoc.addPage([targetWidth, targetHeight]);
+              pdfPage.drawImage(pngImage, { x: 0, y: 0, width: targetWidth, height: targetHeight });
+            }
+          } else if (this.layoutMode === 'paged') {
+            let maxY = 0;
+            this.strokes.forEach(stroke => {
+              stroke.points.forEach(p => { if (p.y > maxY) maxY = p.y; });
             });
+            const numPages = Math.max(1, Math.ceil(maxY / (pageHeight + pageGap)));
             
-            // Embed to PDF
-            const pngDataUrl = tempCanvas.toDataURL('image/png');
-            const pngImage = await pdfDoc.embedPng(pngDataUrl);
-            
-            const pdfPage = pdfDoc.addPage([targetWidth, targetHeight]);
-            pdfPage.drawImage(pngImage, {
-              x: 0,
-              y: 0,
-              width: targetWidth,
-              height: targetHeight
-            });
+            for (let i = 0; i < numPages; i++) {
+               const yOffset = i * (pageHeight + pageGap);
+               const tempCanvas = document.createElement('canvas');
+               tempCanvas.width = pageWidth;
+               tempCanvas.height = pageHeight;
+               const tempCtx = tempCanvas.getContext('2d');
+               
+               tempCtx.fillStyle = this.bgColor;
+               tempCtx.fillRect(0, 0, pageWidth, pageHeight);
+               
+               this.strokes.forEach(stroke => {
+                  if (stroke.isBg) return;
+                  // Filter strokes that intersect this page bounding box
+                  let inBounds = false;
+                  stroke.points.forEach(p => {
+                    if (p.y >= yOffset && p.y <= yOffset + pageHeight) inBounds = true;
+                  });
+                  if (!inBounds) return;
+
+                  tempCtx.beginPath();
+                  tempCtx.lineCap = 'round'; tempCtx.lineJoin = 'round';
+                  tempCtx.lineWidth = stroke.size; tempCtx.strokeStyle = stroke.color; tempCtx.globalAlpha = stroke.opacity || 1;
+                  if (stroke.tool === 'highlighter') tempCtx.globalCompositeOperation = 'multiply';
+                  
+                  stroke.points.forEach((pt, j) => {
+                    const adjY = pt.y - yOffset; // Offset local to page
+                    if (j===0) tempCtx.moveTo(pt.x, adjY); else tempCtx.lineTo(pt.x, adjY);
+                  });
+                  tempCtx.stroke();
+                  tempCtx.globalCompositeOperation = 'source-over';
+               });
+               
+               const pngDataUrl = tempCanvas.toDataURL('image/png');
+               const pngImage = await pdfDoc.embedPng(pngDataUrl);
+               const pdfPage = pdfDoc.addPage([pageWidth, pageHeight]);
+               pdfPage.drawImage(pngImage, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+            }
           }
           
           const pdfBytes = await pdfDoc.save();
@@ -1209,6 +1255,29 @@ class NeonDrawingBoard {
     const currentPage = this._pages[this.currentPageIndex];
     if (currentPage && currentPage.bgCanvas) {
       this.ctx.drawImage(currentPage.bgCanvas, 0, 0);
+    } else if (this.layoutMode === 'paged' && !this.isMultiPage) {
+      // Calculate how many pages to draw based on strokes
+      let maxY = 0;
+      this.strokes.forEach(stroke => {
+        stroke.points.forEach(p => {
+          if (p.y > maxY) maxY = p.y;
+        });
+      });
+      const pageHeight = this.pageHeight || 1130;
+      const pageGap = 20;
+      const pageWidth = this.canvas.width / window.devicePixelRatio;
+      
+      const numPages = Math.max(1, Math.ceil(maxY / (pageHeight + pageGap)));
+      
+      for (let i = 0; i < numPages + 1; i++) { // +1 to always show the next blank page
+        const yOffset = i * (pageHeight + pageGap);
+        // Draw page shadow
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.fillRect(5, yOffset + 5, pageWidth, pageHeight);
+        // Draw page background
+        this.ctx.fillStyle = this.bgColor;
+        this.ctx.fillRect(0, yOffset, pageWidth, pageHeight);
+      }
     }
 
 
