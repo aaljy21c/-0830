@@ -6023,6 +6023,48 @@ function renderTimeline() {
 }
 
 // Read image file, resize, compress to JPEG format and return as Base64 Data URL
+function captureVideoThumbnail(file) {
+  return new Promise((resolve) => {
+    const blobUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.src = blobUrl;
+    video.muted = true;
+    video.playsInline = true;
+    video.style.display = 'none';
+    
+    const timeout = setTimeout(() => {
+      resolve(null);
+    }, 5000);
+    
+    video.addEventListener('loadeddata', () => {
+      video.currentTime = Math.min(0.5, video.duration || 0);
+    });
+    
+    video.addEventListener('seeked', () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 120;
+        canvas.height = video.videoHeight || 80;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        const posterUrl = canvas.toDataURL('image/jpeg', 0.5);
+        clearTimeout(timeout);
+        resolve(posterUrl);
+      } catch(e) {
+        clearTimeout(timeout);
+        resolve(null);
+      }
+    });
+    
+    video.addEventListener('error', () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+    
+    document.body.appendChild(video);
+    setTimeout(() => { try { document.body.removeChild(video); } catch(e){} }, 5500);
+  });
+}
+
 function compressAndSaveImage(file, callback) {
   const reader = new FileReader();
   reader.onload = function(event) {
@@ -8446,9 +8488,9 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
       if (container.contains(loading)) container.removeChild(loading);
       if (!fileRecord || !fileRecord.blob) {
         const err = document.createElement('div');
-        err.innerHTML = '❌<br><span style="font-size:12px; margin-top:4px; display:inline-block; border-bottom:1px solid currentColor;">재시도</span>';
-        err.style.cssText = 'font-size:22px; opacity:0.8; cursor:pointer; text-align:center; color:#fff; display:flex; flex-direction:column; align-items:center;';
-        err.title = "다시 다운로드 시도하기";
+        err.innerHTML = '⚠️<br><span style="font-size:12px; margin-top:4px; display:inline-block; border-bottom:1px solid currentColor;">연동 안됨</span>';
+        err.style.cssText = 'font-size:18px; opacity:0.8; cursor:pointer; text-align:center; color:#fff; display:flex; flex-direction:column; align-items:center;';
+        err.title = "다운로드 재시도";
         err.onclick = (e) => {
           e.stopPropagation();
           if (container.parentElement) {
@@ -8457,6 +8499,19 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
           }
         };
         container.appendChild(err);
+
+        if (onRemove && isEditMode) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.innerHTML = '❌';
+          delBtn.className = 'delete-thumb-btn';
+          delBtn.title = '이 파일 지우기';
+          delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onRemove();
+          });
+          container.appendChild(delBtn);
+        }
         return;
       }
       
@@ -8732,7 +8787,7 @@ const AudioRecorder = {
   async start(onStopCallback, onProgressCallback) {
     if (this.isRecording) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -8851,61 +8906,87 @@ function renderAudioPreviews(containerId, draftArray, onChangeCallback) {
     wrapper.appendChild(row);
 
     // Transcription Text Block
-    if (audioData.transcription) {
-      const textRow = document.createElement('div');
-      textRow.style.display = 'flex';
-      textRow.style.alignItems = 'flex-start';
-      textRow.style.gap = '8px';
-      textRow.style.marginTop = '4px';
-      
-      const sttIcon = document.createElement('span');
-      sttIcon.innerHTML = '📝';
-      sttIcon.style.fontSize = '1.1rem';
-      sttIcon.style.marginTop = '4px';
-      textRow.appendChild(sttIcon);
+    const textRow = document.createElement('div');
+    textRow.style.display = 'none'; // Initially hidden
+    textRow.style.alignItems = 'flex-start';
+    textRow.style.gap = '8px';
+    textRow.style.marginTop = '8px';
+    
+    const sttIcon = document.createElement('span');
+    sttIcon.innerHTML = '📝';
+    sttIcon.style.fontSize = '1.1rem';
+    sttIcon.style.marginTop = '4px';
+    textRow.appendChild(sttIcon);
 
-      const textEl = document.createElement('textarea');
-      textEl.style.flex = '1';
-      textEl.style.fontSize = '0.9rem';
-      textEl.style.color = '#fff';
-      textEl.style.padding = '8px';
-      textEl.style.background = 'rgba(0,0,0,0.3)';
-      textEl.style.border = '1px solid #444';
-      textEl.style.borderRadius = '4px';
-      textEl.style.resize = 'vertical';
-      textEl.style.minHeight = '40px';
-      textEl.value = audioData.transcription;
-      
-      if (!onChangeCallback) {
-        textEl.readOnly = true;
-      } else {
-        textEl.addEventListener('change', (e) => {
-          audioData.transcription = e.target.value;
-          // We don't necessarily need to trigger onChangeCallback just for a text change to avoid re-rendering while typing
-          // But when they blur/change, it's saved to the object.
-        });
-      }
-      textRow.appendChild(textEl);
-
-      if (onChangeCallback) {
-        const delTextBtn = document.createElement('button');
-        delTextBtn.type = 'button';
-        delTextBtn.innerHTML = '🗑️';
-        delTextBtn.title = '변환된 글자만 삭제';
-        delTextBtn.style.background = 'none';
-        delTextBtn.style.border = 'none';
-        delTextBtn.style.cursor = 'pointer';
-        delTextBtn.style.fontSize = '1.1rem';
-        delTextBtn.style.padding = '4px';
-        delTextBtn.addEventListener('click', () => {
-          audioData.transcription = '';
-          onChangeCallback(); // Re-render to remove the text block
-        });
-        textRow.appendChild(delTextBtn);
-      }
-      
-      wrapper.appendChild(textRow);
+    const textEl = document.createElement('textarea');
+    textEl.style.flex = '1';
+    textEl.style.fontSize = '0.9rem';
+    textEl.style.color = '#fff';
+    textEl.style.padding = '8px';
+    textEl.style.background = 'rgba(0,0,0,0.3)';
+    textEl.style.border = '1px solid #444';
+    textEl.style.borderRadius = '4px';
+    textEl.style.resize = 'vertical';
+    textEl.style.minHeight = '60px';
+    textEl.placeholder = "음성 인식된 텍스트가 없거나 수정이 필요하면 직접 입력하세요.";
+    textEl.value = audioData.transcription || '';
+    
+    if (!onChangeCallback) {
+      textEl.readOnly = true;
+    } else {
+      textEl.addEventListener('change', (e) => {
+        audioData.transcription = e.target.value;
+        if (onChangeCallback) onChangeCallback(); // trigger save
+      });
     }
+    textRow.appendChild(textEl);
+
+    if (onChangeCallback) {
+      const delTextBtn = document.createElement('button');
+      delTextBtn.type = 'button';
+      delTextBtn.innerHTML = '🗑️';
+      delTextBtn.title = '텍스트 지우기';
+      delTextBtn.style.background = 'none';
+      delTextBtn.style.border = 'none';
+      delTextBtn.style.cursor = 'pointer';
+      delTextBtn.style.fontSize = '1.1rem';
+      delTextBtn.style.padding = '4px';
+      delTextBtn.addEventListener('click', () => {
+        textEl.value = '';
+        audioData.transcription = '';
+        onChangeCallback(); // trigger save
+      });
+      textRow.appendChild(delTextBtn);
+    }
+
+    wrapper.appendChild(textRow);
+
+    // Toggle Button for STT Text
+    const toggleTextBtn = document.createElement('button');
+    toggleTextBtn.type = 'button';
+    toggleTextBtn.innerHTML = audioData.transcription ? '📖 한글 텍스트 보기 (수정 가능)' : '✏️ 한글 변환/메모 추가';
+    toggleTextBtn.style.marginTop = '6px';
+    toggleTextBtn.style.padding = '6px 10px';
+    toggleTextBtn.style.background = 'rgba(255,255,255,0.1)';
+    toggleTextBtn.style.border = '1px solid #555';
+    toggleTextBtn.style.borderRadius = '4px';
+    toggleTextBtn.style.color = '#ddd';
+    toggleTextBtn.style.fontSize = '0.85rem';
+    toggleTextBtn.style.cursor = 'pointer';
+    toggleTextBtn.style.alignSelf = 'flex-start';
+
+    toggleTextBtn.addEventListener('click', () => {
+      if (textRow.style.display === 'none') {
+        textRow.style.display = 'flex';
+        toggleTextBtn.innerHTML = '⬆️ 텍스트 숨기기';
+      } else {
+        textRow.style.display = 'none';
+        toggleTextBtn.innerHTML = textEl.value.trim() ? '📖 한글 텍스트 보기 (수정 가능)' : '✏️ 한글 변환/메모 추가';
+      }
+    });
+    
+    // Insert toggle button right after the audio row
+    wrapper.insertBefore(toggleTextBtn, textRow);
 
     container.appendChild(wrapper);
   });
@@ -8946,64 +9027,71 @@ function handleAudioDictateClick(btnId, inputId, draftsArray, containerId, onCha
   });
 }
 
-// Setup dictate buttons for New Record and Todo Modal after DOM loads
-document.addEventListener('DOMContentLoaded', () => {
-  handleVideoRecordClick('btn-video-record', state.diaryDraftImages, 'new-record-previews', () => {
-    renderDiary();
-  });
-  handleAudioDictateClick(
-    'btn-dictate-record', 
-    'new-record-text', 
-    state.diaryDraftAudio, 
-    'new-record-audio-previews', 
-    () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, null)) // Will hook to renderDiary later
-  );
-  
-  // Fullscreen Drawing Modal Global Functions
-  window.currentDrawingBoard = null;
-  window.openFullscreenDrawing = function(initialData, onSaveCallback) {
-    const modal = document.getElementById('drawing-fullscreen-modal');
-    const container = document.getElementById('drawing-fullscreen-container');
-    if (!modal || !container) return;
-    
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
-    document.body.style.overflow = 'hidden'; // prevent bg scroll
-    
-    container.innerHTML = '';
-
-    // 스로틀링: 스트로크마다 저장하되 300ms 이내 연속 호출은 마지막 한 번만 실행
-    let autoSaveTimer = null;
-    const throttledSave = (data) => {
-      clearTimeout(autoSaveTimer);
-      autoSaveTimer = setTimeout(() => {
-        if (onSaveCallback) onSaveCallback(data);
-      }, 300);
-    };
-
-    window.currentDrawingBoard = new NeonDrawingBoard(container, {
-      initialData: initialData || [],
-      onChange: (data) => {
-        // 그림을 그릴 때마다 실시간 자동 저장 (스로틀링 적용)
-        throttledSave(data);
-      },
-      onClose: (data) => {
-        // 닫기 버튼 클릭 시: 진행 중인 자동저장 취소 후 즉시 저장
-        clearTimeout(autoSaveTimer);
-        if (onSaveCallback) onSaveCallback(data);
-        window.closeFullscreenDrawing();
-      }
-    });
-  };
-
-  window.closeFullscreenDrawing = function() {
-    const modal = document.getElementById('drawing-fullscreen-modal');
-    if (modal) {
-      modal.classList.add('hidden');
-      modal.style.display = 'none';
-    }
-    document.body.style.overflow = '';
-    window.currentDrawingBoard = null;
-  };
+// Setup dictate buttons for New Record and Todo Modal
+handleVideoRecordClick('btn-video-record', state.diaryDraftImages, 'new-record-previews', () => {
+  renderDiary();
 });
+
+handleAudioDictateClick(
+  'btn-dictate-record', 
+  'new-record-text', 
+  state.diaryDraftAudio, 
+  'new-record-audio-previews', 
+  () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, null)) // Will hook to renderDiary later
+);
+
+handleAudioDictateClick(
+  'btn-dictate-todo-modal', 
+  'todo-edit-modal-memo', 
+  todoEditDraftAudio, 
+  'todo-edit-modal-audio-previews', 
+  () => renderAudioPreviews('todo-edit-modal-audio-previews', todoEditDraftAudio, () => renderAudioPreviews('todo-edit-modal-audio-previews', todoEditDraftAudio, null))
+);
+
+// Fullscreen Drawing Modal Global Functions
+window.currentDrawingBoard = null;
+window.openFullscreenDrawing = function(initialData, onSaveCallback) {
+  const modal = document.getElementById('drawing-fullscreen-modal');
+  const container = document.getElementById('drawing-fullscreen-container');
+  if (!modal || !container) return;
+  
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden'; // prevent bg scroll
+  
+  container.innerHTML = '';
+
+  // 스로틀링: 스트로크마다 저장하되 300ms 이내 연속 호출은 마지막 한 번만 실행
+  let autoSaveTimer = null;
+  const throttledSave = (data) => {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+      if (onSaveCallback) onSaveCallback(data);
+    }, 300);
+  };
+
+  window.currentDrawingBoard = new NeonDrawingBoard(container, {
+    initialData: initialData || [],
+    onChange: (data) => {
+      // 그림을 그릴 때마다 실시간 자동 저장 (스로틀링 적용)
+      throttledSave(data);
+    },
+    onClose: (data) => {
+      // 닫기 버튼 클릭 시: 진행 중인 자동저장 취소 후 즉시 저장
+      clearTimeout(autoSaveTimer);
+      if (onSaveCallback) onSaveCallback(data);
+      window.closeFullscreenDrawing();
+    }
+  });
+};
+
+window.closeFullscreenDrawing = function() {
+  const modal = document.getElementById('drawing-fullscreen-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
+  document.body.style.overflow = '';
+  window.currentDrawingBoard = null;
+};
 

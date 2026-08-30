@@ -62,7 +62,7 @@ class NeonDrawingBoard {
     this.points = [];
     this.holdTimer = null;
     this.isSnapped = false;
-    this.penOnlyMode = true; // Pen Only mode (Palm rejection) by default
+    this.penOnlyMode = false; // Allow touch drawing by default
 
     // Pan and Zoom
     this.viewScale = 1;
