@@ -8746,7 +8746,7 @@ const GDriveMediaSync = {
       // Step 2: Upload the actual binary data
       await fetch(location, {
         method: 'PUT',
-        headers: { 'Content-Length': blob.size },
+        headers: {},
         body: blob
       });
     } catch (e) { console.error('Upload failed:', e); }

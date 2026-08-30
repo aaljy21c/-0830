@@ -1241,10 +1241,10 @@ class NeonDrawingBoard {
       return {
         type: 'pdf_drawing',
         pdfFileId: this.pdfFileId,
-        strokesPerPage: this._pages.map(p => p._strokes)
+        strokesPerPage: JSON.parse(JSON.stringify(this._pages.map(p => p._strokes)))
       };
     }
-    return this.strokes;
+    return JSON.parse(JSON.stringify(this.strokes));
   }
 
 
