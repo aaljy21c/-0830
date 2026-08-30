@@ -8460,8 +8460,16 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
       if (container.contains(loading)) container.removeChild(loading);
       if (!fileRecord || !fileRecord.blob) {
         const err = document.createElement('div');
-        err.innerHTML = '❌';
-        err.style.cssText = 'font-size:22px; opacity:0.7;';
+        err.innerHTML = '❌<br><span style="font-size:12px; margin-top:4px; display:inline-block; border-bottom:1px solid currentColor;">재시도</span>';
+        err.style.cssText = 'font-size:22px; opacity:0.8; cursor:pointer; text-align:center; color:#fff; display:flex; flex-direction:column; align-items:center;';
+        err.title = "다시 다운로드 시도하기";
+        err.onclick = (e) => {
+          e.stopPropagation();
+          if (container.parentElement) {
+            const newContainer = createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove);
+            container.parentElement.replaceChild(newContainer, container);
+          }
+        };
         container.appendChild(err);
         return;
       }
@@ -8545,7 +8553,16 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
        console.error('Failed to load file:', e);
        if (container.contains(loading)) container.removeChild(loading);
        const err = document.createElement('div');
-       err.innerHTML = '❌';
+       err.innerHTML = '❌<br><span style="font-size:12px; margin-top:4px; display:inline-block; border-bottom:1px solid currentColor;">재시도</span>';
+       err.style.cssText = 'font-size:22px; opacity:0.8; cursor:pointer; text-align:center; color:#fff; display:flex; flex-direction:column; align-items:center;';
+       err.title = "다시 다운로드 시도하기";
+       err.onclick = (e) => {
+         e.stopPropagation();
+         if (container.parentElement) {
+           const newContainer = createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove);
+           container.parentElement.replaceChild(newContainer, container);
+         }
+       };
        container.appendChild(err);
     });
   }
@@ -8554,6 +8571,7 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
 
 // ====== FILE DB (IndexedDB) ======
 const GDriveMediaSync = {
+  _pendingDownloads: {},
   async uploadMedia(id, blob, type, name) {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return;
     try {
@@ -8592,17 +8610,46 @@ const GDriveMediaSync = {
   },
   async downloadMedia(id) {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return null;
-    try {
-      const searchRes = await fetch("https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
-      if (!searchRes.ok) return null;
-      const searchData = await searchRes.json();
-      const file = searchData.files && searchData.files[0];
-      if (!file) return null;
-      const contentRes = await fetch("https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
-      if (!contentRes.ok) return null;
-      const blob = await contentRes.blob();
-      return { id, blob, type: file.appProperties?.type || 'unknown', name: file.appProperties?.name || '', timestamp: Date.now() };
-    } catch (e) { return null; }
+    
+    // 이미 같은 파일의 다운로드가 진행 중이면 해당 Promise를 반환하여 중복 요청 방지
+    if (this._pendingDownloads[id]) {
+      return this._pendingDownloads[id];
+    }
+
+    const downloadPromise = (async () => {
+      try {
+        const searchRes = await fetch("https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+        
+        if (searchRes.status === 401) {
+          if (typeof autoRefreshGDriveToken === 'function') autoRefreshGDriveToken();
+          return null;
+        }
+        if (!searchRes.ok) return null;
+        
+        const searchData = await searchRes.json();
+        const file = searchData.files && searchData.files[0];
+        if (!file) return null;
+        
+        const contentRes = await fetch("https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
+        
+        if (contentRes.status === 401) {
+          if (typeof autoRefreshGDriveToken === 'function') autoRefreshGDriveToken();
+          return null;
+        }
+        if (!contentRes.ok) return null;
+        
+        const blob = await contentRes.blob();
+        return { id, blob, type: file.appProperties?.type || 'unknown', name: file.appProperties?.name || '', timestamp: Date.now() };
+      } catch (e) { 
+        console.error("Download media failed:", e);
+        return null; 
+      } finally {
+        delete this._pendingDownloads[id];
+      }
+    })();
+
+    this._pendingDownloads[id] = downloadPromise;
+    return downloadPromise;
   }
 };
 const FileDB = {
