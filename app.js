@@ -9028,10 +9028,6 @@ function handleAudioDictateClick(btnId, inputId, draftsArray, containerId, onCha
 }
 
 // Setup dictate buttons for New Record and Todo Modal
-handleVideoRecordClick('btn-video-record', state.diaryDraftImages, 'new-record-previews', () => {
-  renderDiary();
-});
-
 handleAudioDictateClick(
   'btn-dictate-record', 
   'new-record-text', 

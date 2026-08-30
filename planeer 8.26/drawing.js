@@ -162,6 +162,13 @@ class NeonDrawingBoard {
     this.wrapper.appendChild(this.canvasContainer);
     this.container.appendChild(this.wrapper);
 
+    // Add transparent overlay in readOnly mode to intercept and bubble click events reliably
+    if (this.readOnly) {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:absolute; top:0; left:0; right:0; bottom:0; z-index:10; cursor:pointer;';
+      this.canvasContainer.appendChild(overlay);
+    }
+
     // Auto-expand if initial strokes go beyond default height
     let maxY = 0;
     this.strokes.forEach(stroke => {
