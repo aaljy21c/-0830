@@ -8724,7 +8724,14 @@ const FileDB = {
       tx.onerror = (e) => reject(e);
     });
     if (typeof gdriveAccessToken !== 'undefined' && gdriveAccessToken) {
-      await GDriveMediaSync.uploadMedia(id, blob, type, name);
+      const overlay = document.getElementById('global-upload-overlay');
+      const isVideo = type && type.startsWith('video/');
+      if (isVideo && overlay) overlay.style.display = 'flex';
+      try {
+        await GDriveMediaSync.uploadMedia(id, blob, type, name);
+      } finally {
+        if (isVideo && overlay) overlay.style.display = 'none';
+      }
     }
     return id;
   },

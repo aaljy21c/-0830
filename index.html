@@ -16,6 +16,13 @@
   <link rel="stylesheet" href="drawing.css?v=1788058276511">
 </head>
 <body>
+  <!-- Global Upload Overlay -->
+  <div id="global-upload-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:99999; flex-direction:column; justify-content:center; align-items:center; color:white;">
+    <div style="font-size: 3rem; margin-bottom: 20px; animation: pulse 1.5s infinite;">🎬</div>
+    <div style="font-size: 1.2rem; font-weight: bold; margin-bottom: 10px;">대용량 파일 업로드 중...</div>
+    <div style="font-size: 0.9rem; color: #aaa;">앱을 닫거나 화면을 벗어나지 마세요.</div>
+  </div>
+
   <div class="main-wrapper" id="main-wrapper">
     <!-- Global App Header -->
     <header class="global-header">
