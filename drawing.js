@@ -110,12 +110,29 @@ class NeonDrawingBoard {
           📄 PDF 불러오기
           <input type="file" id="pdf-import-input" accept="application/pdf" style="display:none">
         </label>
+        <button type="button" id="btn-add-blank-page" class="sidebar-btn" style="display:block; width:100%; text-align:center; margin-top:6px; padding:8px; background:rgba(255,255,255,0.1); border:1px dashed #888; border-radius:8px; color:#fff; cursor:pointer; font-size:0.9rem;">
+          ➕ 빈 페이지 추가
+        </button>
       </div>
       <div id="drawing-thumbnails" class="sidebar-thumbnails"></div>
     `;
       this.container.appendChild(this.sidebar);
 
       this.sidebar.querySelector('#pdf-import-input').addEventListener('change', (e) => this.handlePdfImport(e));
+
+      // Add blank page button
+      const btnAddBlankPage = this.sidebar.querySelector('#btn-add-blank-page');
+      if (btnAddBlankPage) {
+        btnAddBlankPage.addEventListener('click', () => {
+          this._pages.push({ type: 'blank', _strokes: [], bgCanvas: null });
+          this.isMultiPage = true;
+          this.currentPageIndex = this._pages.length - 1;
+          this.updateSidebar();
+          this.sidebar.classList.remove('hidden'); // keep sidebar open
+          this.resetViewToPage();
+          if (this.onChange) this.onChange(this.getData());
+        });
+      }
 
       // Floating Toolbar
       this.toolbar = document.createElement('div');
@@ -233,6 +250,31 @@ class NeonDrawingBoard {
       btnClose.addEventListener('click', (e) => {
         e.preventDefault();
         this.onClose(this.getData());
+      });
+    }
+
+    // Layout mode toggle: paged <-> infinite scroll
+    const btnLayoutMode = this.toolbar.querySelector('#btn-layout-mode');
+    if (btnLayoutMode) {
+      btnLayoutMode.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.layoutMode = this.layoutMode === 'paged' ? 'infinite' : 'paged';
+        localStorage.setItem('planeer_drawing_mode', this.layoutMode);
+        btnLayoutMode.innerHTML = this.layoutMode === 'paged' ? '📄' : '📜';
+        btnLayoutMode.title = this.layoutMode === 'paged' ? '페이지 모드 (클릭하면 무한 스크롤)' : '무한 스크롤 모드 (클릭하면 페이지 모드)';
+        this.render();
+      });
+      // Init icon
+      btnLayoutMode.innerHTML = this.layoutMode === 'paged' ? '📄' : '📜';
+      btnLayoutMode.title = this.layoutMode === 'paged' ? '페이지 모드 (클릭하면 무한 스크롤)' : '무한 스크롤 모드 (클릭하면 페이지 모드)';
+    }
+
+    // X close button (no save)
+    const btnDrawingClose = this.toolbar.querySelector('#btn-drawing-close');
+    if (btnDrawingClose) {
+      btnDrawingClose.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (this.onClose) this.onClose(this.getData());
       });
     }
 
@@ -1370,80 +1412,6 @@ class NeonDrawingBoard {
     this.ctx.stroke();
     this.ctx.restore();
   }
-}
-
-window.NeonDrawingBoard = NeonDrawingBoard;
-this.ctx.stroke();
-this.ctx.setLineDash([]);
-    }
-
-// Draw Selection Bounding Box
-if (this.selectedStrokes.length > 0) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  this.selectedStrokes.forEach(s => {
-    s.points.forEach(p => {
-      if (p.x < minX) minX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y > maxY) maxY = p.y;
-    });
-  });
-  const pad = 5;
-  this.ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
-  this.ctx.lineWidth = 1 / this.viewScale;
-  this.ctx.setLineDash([4 / this.viewScale, 4 / this.viewScale]);
-  this.ctx.strokeRect(minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2);
-  this.ctx.setLineDash([]);
-
-  this.selectedStrokes.forEach(stroke => {
-    this.ctx.save();
-    this.ctx.globalAlpha = 0.3;
-    this.ctx.shadowColor = '#3b82f6';
-    this.ctx.shadowBlur = 10 / this.viewScale;
-    this.drawStroke(stroke, true);
-    this.ctx.restore();
-  });
-}
-
-this.ctx.restore();
-  }
-
-drawStroke(stroke, isHighlight = false) {
-  if (stroke.isBg) return;
-  if (stroke.points.length < 2) return;
-
-  this.ctx.save();
-  this.ctx.beginPath();
-  this.ctx.lineCap = 'round';
-  this.ctx.lineJoin = 'round';
-  this.ctx.lineWidth = stroke.size;
-  this.ctx.strokeStyle = stroke.color;
-  this.ctx.globalAlpha = stroke.opacity || 1;
-
-  // Simulate highlighter blending
-  if (stroke.tool === 'highlighter' && !isHighlight) {
-    this.ctx.globalCompositeOperation = 'multiply'; // Works well on light backgrounds
-  } else {
-    this.ctx.globalCompositeOperation = 'source-over';
-  }
-
-  if (stroke.isShape) {
-    this.ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-    this.ctx.lineTo(stroke.points[1].x, stroke.points[1].y);
-  } else {
-    this.ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-    for (let i = 1; i < stroke.points.length - 1; i++) {
-      const xc = (stroke.points[i].x + stroke.points[i + 1].x) / 2;
-      const yc = (stroke.points[i].y + stroke.points[i + 1].y) / 2;
-      this.ctx.quadraticCurveTo(stroke.points[i].x, stroke.points[i].y, xc, yc);
-    }
-    const last = stroke.points[stroke.points.length - 1];
-    this.ctx.lineTo(last.x, last.y);
-  }
-
-  this.ctx.stroke();
-  this.ctx.restore();
-}
 }
 
 window.NeonDrawingBoard = NeonDrawingBoard;

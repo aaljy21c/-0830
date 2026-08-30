@@ -3278,11 +3278,16 @@ function setupEventListeners() {
       let processed = 0;
       files.forEach(file => {
         if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(id => {
+          FileDB.saveFile(file, file.type, file.name).then(async id => {
+            let posterDataUrl = null;
+            if (file.type.startsWith('video/')) {
+              posterDataUrl = await captureVideoThumbnail(file);
+            }
             state.diaryDraftImages.push({
               fileId: id,
               type: file.type.startsWith('video/') ? 'video' : 'pdf',
-              name: file.name
+              name: file.name,
+              poster: posterDataUrl
             });
             processed++;
             if (processed === files.length) {
@@ -3582,11 +3587,16 @@ function setupEventListeners() {
       let processed = 0;
       files.forEach(file => {
         if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(id => {
+          FileDB.saveFile(file, file.type, file.name).then(async id => {
+            let posterDataUrl = null;
+            if (file.type.startsWith('video/')) {
+              posterDataUrl = await captureVideoThumbnail(file);
+            }
             todoEditDraftImages.push({
               fileId: id,
               type: file.type.startsWith('video/') ? 'video' : 'pdf',
-              name: file.name
+              name: file.name,
+              poster: posterDataUrl
             });
             processed++;
             if (processed === files.length) {
@@ -8392,9 +8402,11 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
     mediaObj = { src: mediaObj, type: 'image' };
   }
 
-  if (!mediaObj.type || mediaObj.type === 'image' || mediaObj.src) {
+  const isDataVideo = typeof mediaObj.src === 'string' && mediaObj.src.startsWith('data:video/');
+  
+  if (!isDataVideo && (!mediaObj.type || mediaObj.type === 'image' || (mediaObj.src && mediaObj.type !== 'video'))) {
     const img = document.createElement('img');
-    img.src = mediaObj.src;
+    img.src = mediaObj.src || mediaObj.poster;
     if (mediaObj.rotate !== undefined) img.style = getImageStyle(mediaObj);
     if (!isEditMode) {
       img.style.cursor = 'pointer';
@@ -8468,16 +8480,38 @@ const GDriveMediaSync = {
   async uploadMedia(id, blob, type, name) {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return;
     try {
-      const boundary = 'neon_planner_media_boundary';
-      const metadata = { name: 'neon_media_' + id, mimeType: blob.type, parents: ['appDataFolder'], appProperties: { fileId: id, type: type || '', name: name || '' } };
-      const arrayBuffer = await blob.arrayBuffer();
-      const metadataStr = JSON.stringify(metadata);
-      const bodyPrefix = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + metadataStr + '\r\n--' + boundary + '\r\nContent-Type: ' + blob.type + '\r\n\r\n';
-      const bodySuffix = '\r\n--' + boundary + '--';
-      const encoder = new TextEncoder();
-      const fullBlob = new Blob([encoder.encode(bodyPrefix), arrayBuffer, encoder.encode(bodySuffix)], { type: 'multipart/related; boundary=' + boundary });
-      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', { method: 'POST', headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }, body: fullBlob });
-    } catch (e) { console.error(e); }
+      const metadata = { name: 'neon_media_' + id, parents: ['appDataFolder'], appProperties: { fileId: id, type: type || '', name: name || '' } };
+      
+      // Step 1: Initiate Resumable Upload
+      const initRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + gdriveAccessToken,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Type': blob.type,
+          'X-Upload-Content-Length': blob.size
+        },
+        body: JSON.stringify(metadata)
+      });
+      
+      if (!initRes.ok) {
+        console.error('Resumable init failed');
+        return;
+      }
+      
+      const location = initRes.headers.get('Location');
+      if (!location) {
+        console.error('No upload location returned');
+        return;
+      }
+      
+      // Step 2: Upload the actual binary data
+      await fetch(location, {
+        method: 'PUT',
+        headers: { 'Content-Length': blob.size },
+        body: blob
+      });
+    } catch (e) { console.error('Upload failed:', e); }
   },
   async downloadMedia(id) {
     if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return null;
