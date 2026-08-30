@@ -172,9 +172,11 @@ class NeonDrawingBoard {
     // Auto-expand if initial strokes go beyond default height
     let maxY = 0;
     this.strokes.forEach(stroke => {
-      stroke.points.forEach(p => {
-        if (p.y > maxY) maxY = p.y;
-      });
+      if (stroke.points) {
+        stroke.points.forEach(p => {
+          if (p.y > maxY) maxY = p.y;
+        });
+      }
     });
     if (maxY > 350) { // Default is 400, add padding
       this.canvasContainer.style.minHeight = `${maxY + 50}px`;

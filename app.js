@@ -4386,9 +4386,9 @@ function openTodoEditModal(todoId) {
     
     // Update thumbnail
     const openTodoDrawingEditor = () => {
-      openFullscreenDrawing(todoEditDraftDrawing, (data) => {
+      openFullscreenDrawing(todoEditDraftDrawing, (data, isClosing) => {
         todoEditDraftDrawing = data;
-        updateThumb();
+        if (isClosing) updateThumb();
       });
     };
 
@@ -4420,16 +4420,11 @@ function openTodoEditModal(todoId) {
     // Remove existing event listeners by replacing the node (to prevent duplicates)
     const newBtn = todoDictateBtn.cloneNode(true);
     todoDictateBtn.parentNode.replaceChild(newBtn, todoDictateBtn);
-    handleVideoRecordClick(
-      'btn-video-todo-modal',
-      todoEditDraftImages,
-      'todo-edit-modal-previews',
-      () => renderTodoEditPreviews()
-    );
+
     handleAudioDictateClick(
       'btn-dictate-todo-modal', 
       'todo-edit-modal-memo', 
-      todoEditDraftAudio, 
+      () => todoEditDraftAudio, 
       'todo-edit-modal-audio-previews',
       () => renderTodoEditPreviews()
     );
@@ -5355,16 +5350,18 @@ function renderDiary() {
         card.appendChild(drawingContainer);
 
         drawingLabel.addEventListener('click', () => {
-          openFullscreenDrawing(state.diaryDraftDrawing || [], (data) => {
+          openFullscreenDrawing(state.diaryDraftDrawing || [], (data, isClosing) => {
             state.diaryDraftDrawing = data;
-            // Update thumbnail
-            drawingContainer.innerHTML = '';
-            if (data && data.length > 0) {
-              drawingContainer.style.display = 'block';
-              drawingContainer.classList.remove('hidden');
-              new NeonDrawingBoard(drawingContainer, { initialData: data, readOnly: true });
-            } else {
-              drawingContainer.style.display = 'none';
+            if (isClosing) {
+              // Update thumbnail
+              drawingContainer.innerHTML = '';
+              if (data && data.length > 0) {
+                drawingContainer.style.display = 'block';
+                drawingContainer.classList.remove('hidden');
+                new NeonDrawingBoard(drawingContainer, { initialData: data, readOnly: true });
+              } else {
+                drawingContainer.style.display = 'none';
+              }
             }
           });
         });
@@ -5463,10 +5460,10 @@ function renderDiary() {
           const openDirectEdit = (e) => {
             e.stopPropagation();
             e.preventDefault();
-            openFullscreenDrawing(record.drawing, (data) => {
+            openFullscreenDrawing(record.drawing, (data, isClosing) => {
               record.drawing = data;
               saveDiaries();
-              renderDiary();
+              if (isClosing) renderDiary();
             });
           };
           viewDrawingContainer.addEventListener('click', openDirectEdit);
@@ -5635,9 +5632,9 @@ function renderDiary() {
       btnToggleNewRecordDrawing.parentNode.replaceChild(newBtn, btnToggleNewRecordDrawing);
       
       const openNewRecordDrawingEditor = () => {
-        openFullscreenDrawing(state.diaryDraftDrawing || [], (data) => {
+        openFullscreenDrawing(state.diaryDraftDrawing || [], (data, isClosing) => {
           state.diaryDraftDrawing = data;
-          updateNewRecordThumb();
+          if (isClosing) updateNewRecordThumb();
         });
       };
       newBtn.addEventListener('click', openNewRecordDrawingEditor);
@@ -7834,10 +7831,10 @@ function renderTodos() {
       const openDirectEdit = (e) => {
         e.stopPropagation();
         e.preventDefault();
-        openFullscreenDrawing(todo.memoDrawing, (data) => {
+        openFullscreenDrawing(todo.memoDrawing, (data, isClosing) => {
           todo.memoDrawing = data;
           saveTodos();
-          renderTodos();
+          if (isClosing) renderTodos();
         });
       };
       viewDrawingContainer.addEventListener('click', openDirectEdit);
@@ -8624,7 +8621,7 @@ const GDriveMediaSync = {
         headers: {
           'Authorization': 'Bearer ' + gdriveAccessToken,
           'Content-Type': 'application/json; charset=UTF-8',
-          'X-Upload-Content-Type': blob.type,
+          'X-Upload-Content-Type': blob.type || 'application/octet-stream',
           'X-Upload-Content-Length': blob.size
         },
         body: JSON.stringify(metadata)
@@ -8715,7 +8712,9 @@ const FileDB = {
       tx.oncomplete = () => resolve();
       tx.onerror = (e) => reject(e);
     });
-    GDriveMediaSync.uploadMedia(id, blob, type, name);
+    if (typeof gdriveAccessToken !== 'undefined' && gdriveAccessToken) {
+      await GDriveMediaSync.uploadMedia(id, blob, type, name);
+    }
     return id;
   },
   async getFile(id) {
@@ -8964,7 +8963,7 @@ function renderAudioPreviews(containerId, draftArray, onChangeCallback) {
     // Toggle Button for STT Text
     const toggleTextBtn = document.createElement('button');
     toggleTextBtn.type = 'button';
-    toggleTextBtn.innerHTML = audioData.transcription ? '📖 한글 텍스트 보기 (수정 가능)' : '✏️ 한글 변환/메모 추가';
+    toggleTextBtn.innerHTML = audioData.transcription ? '📖 변환된 텍스트 보기 (수정 가능)' : '✏️ 텍스트 직접 입력 (자동변환 없음)';
     toggleTextBtn.style.marginTop = '6px';
     toggleTextBtn.style.padding = '6px 10px';
     toggleTextBtn.style.background = 'rgba(255,255,255,0.1)';
@@ -8981,7 +8980,7 @@ function renderAudioPreviews(containerId, draftArray, onChangeCallback) {
         toggleTextBtn.innerHTML = '⬆️ 텍스트 숨기기';
       } else {
         textRow.style.display = 'none';
-        toggleTextBtn.innerHTML = textEl.value.trim() ? '📖 한글 텍스트 보기 (수정 가능)' : '✏️ 한글 변환/메모 추가';
+        toggleTextBtn.innerHTML = textEl.value.trim() ? '📖 변환된 텍스트 보기 (수정 가능)' : '✏️ 텍스트 직접 입력 (자동변환 없음)';
       }
     });
     
@@ -8992,7 +8991,7 @@ function renderAudioPreviews(containerId, draftArray, onChangeCallback) {
   });
 }
 
-function handleAudioDictateClick(btnId, inputId, draftsArray, containerId, onChange) {
+function handleAudioDictateClick(btnId, inputId, getDraftsArray, containerId, onChange) {
   const btn = document.getElementById(btnId);
   const textField = document.getElementById(inputId);
   if (!btn) return;
@@ -9010,7 +9009,7 @@ function handleAudioDictateClick(btnId, inputId, draftsArray, containerId, onCha
       AudioRecorder.start(
         (base64Audio, transcript) => {
           if (base64Audio) {
-            draftsArray.push({ src: base64Audio, transcription: transcript });
+            getDraftsArray().push({ src: base64Audio, transcription: transcript });
             if (onChange) onChange();
           }
         },
@@ -9031,7 +9030,7 @@ function handleAudioDictateClick(btnId, inputId, draftsArray, containerId, onCha
 handleAudioDictateClick(
   'btn-dictate-record', 
   'new-record-text', 
-  state.diaryDraftAudio, 
+  () => state.diaryDraftAudio, 
   'new-record-audio-previews', 
   () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, null)) // Will hook to renderDiary later
 );
@@ -9057,25 +9056,25 @@ window.openFullscreenDrawing = function(initialData, onSaveCallback) {
   
   container.innerHTML = '';
 
-  // 스로틀링: 스트로크마다 저장하되 300ms 이내 연속 호출은 마지막 한 번만 실행
+  // 스로틀링: 스트로크마다 데이터만 저장 (UI 갱신은 최소화)
   let autoSaveTimer = null;
   const throttledSave = (data) => {
     clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(() => {
-      if (onSaveCallback) onSaveCallback(data);
+      if (onSaveCallback) onSaveCallback(data, false);
     }, 300);
   };
 
   window.currentDrawingBoard = new NeonDrawingBoard(container, {
     initialData: initialData || [],
     onChange: (data) => {
-      // 그림을 그릴 때마다 실시간 자동 저장 (스로틀링 적용)
+      // 그림을 그릴 때마다 실시간 자동 저장 (UI 리렌더링 제외)
       throttledSave(data);
     },
     onClose: (data) => {
-      // 닫기 버튼 클릭 시: 진행 중인 자동저장 취소 후 즉시 저장
+      // 닫기 버튼 클릭 시: 진행 중인 자동저장 취소 후 즉시 저장 및 UI 갱신
       clearTimeout(autoSaveTimer);
-      if (onSaveCallback) onSaveCallback(data);
+      if (onSaveCallback) onSaveCallback(data, true);
       window.closeFullscreenDrawing();
     }
   });
