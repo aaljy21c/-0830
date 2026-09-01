@@ -257,7 +257,10 @@ class NeonDrawingBoard {
     const btnClose = this.toolbar.querySelector('#btn-close-drawing');
     if (btnClose && this.onClose) {
       btnClose.addEventListener('click', (e) => {
-        e.preventDefault();
+        e.stopPropagation();
+        if (this.isDrawing) {
+          this.endDrawing(e);
+        }
         this.onClose(this.getData());
       });
     }
@@ -283,6 +286,9 @@ class NeonDrawingBoard {
     if (btnDrawingClose) {
       btnDrawingClose.addEventListener('click', (e) => {
         e.preventDefault();
+        if (this.isDrawing) {
+          this.endDrawing(e);
+        }
         if (this.onClose) this.onClose(this.getData());
       });
     }

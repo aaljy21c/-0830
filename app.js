@@ -5102,7 +5102,9 @@ function renderMediaToContainer(mediaObj, container, onClick) {
       if (onClick) vid.addEventListener('click', onClick);
       FileDB.getFile(mediaObj.fileId).then(f => {
         if (f) {
-           vid.src = URL.createObjectURL(f.blob);
+           const blobType = f.type || 'video/mp4';
+           const typedBlob = new Blob([f.blob], { type: blobType });
+           vid.src = URL.createObjectURL(typedBlob);
            vid.preload = 'metadata';
         }
       });
@@ -6240,6 +6242,7 @@ function showLightboxImage(idx) {
       vid.style.maxHeight = '90%';
       vid.controls = true;
       vid.autoplay = true;
+      vid.playsInline = true;
       
       const hint = document.createElement('div');
       hint.style.color = '#fff';
@@ -6251,7 +6254,9 @@ function showLightboxImage(idx) {
 
       FileDB.getFile(currentImg.fileId).then(f => {
         if (f) {
-          const blobUrl = URL.createObjectURL(f.blob);
+          const blobType = f.type || 'video/mp4';
+          const typedBlob = new Blob([f.blob], { type: blobType });
+          const blobUrl = URL.createObjectURL(typedBlob);
           vid.src = blobUrl;
           if (downloadLink) {
             downloadLink.href = blobUrl;
@@ -8506,20 +8511,21 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
   container.style.overflow = 'hidden';
   if (!isEditMode) container.style.height = '100%';
 
+  let delBtn = null;
   if (isEditMode && onRemove) {
-    const delBtn = document.createElement('button');
+    delBtn = document.createElement('button');
     delBtn.type = 'button';
     delBtn.className = 'delete-thumb-btn';
     delBtn.innerHTML = '&times;';
     delBtn.style.position = 'absolute';
     delBtn.style.top = '4px';
     delBtn.style.right = '4px';
-    delBtn.style.zIndex = '10';
+    delBtn.style.zIndex = '20';
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      e.preventDefault();
       onRemove();
     });
-    container.appendChild(delBtn);
   }
 
   if (typeof mediaObj === 'string') {
@@ -8565,6 +8571,14 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
       playBadge.innerHTML = '▶';
       playBadge.style.cssText = 'position:absolute; bottom:4px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); color:white; font-size:14px; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; pointer-events:none;';
       container.appendChild(playBadge);
+      
+      if (onClick) {
+        container.style.cursor = 'pointer';
+        container.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onClick();
+        });
+      }
       return container; // Done — no async load needed for thumbnails
     }
 
@@ -8611,7 +8625,9 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
         return;
       }
       
-      const blobUrl = URL.createObjectURL(fileRecord.blob);
+      const fileType = fileRecord.type || (mediaObj.type === 'video' ? 'video/mp4' : 'application/pdf');
+      const typedBlob = new Blob([fileRecord.blob], { type: fileType });
+      const blobUrl = URL.createObjectURL(typedBlob);
       if (mediaObj.type === 'video') {
         if (isEditMode) {
           // In thumbnail/edit mode: capture first frame from blob and show as image
@@ -8703,6 +8719,11 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
        container.appendChild(err);
     });
   }
+  
+  if (delBtn) {
+    container.appendChild(delBtn);
+  }
+  
   return container;
 }
 
