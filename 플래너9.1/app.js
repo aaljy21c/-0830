@@ -371,11 +371,12 @@ function init() {
     if (savedOrderJson) {
       try {
         const savedOrder = JSON.parse(savedOrderJson);
-        const children = Array.from(navContainer.children);
-        const orderedChildren = [];
-        const remainingChildren = [...children];
+        if (Array.isArray(savedOrder)) {
+          const children = Array.from(navContainer.children);
+          const orderedChildren = [];
+          const remainingChildren = [...children];
 
-        savedOrder.forEach(id => {
+          savedOrder.forEach(id => {
           const elIndex = remainingChildren.findIndex(el => el.id === id || (id === 'gdrive-group' && el.classList.contains('header-gdrive-group')));
           if (elIndex !== -1) {
             orderedChildren.push(remainingChildren[elIndex]);
@@ -386,6 +387,7 @@ function init() {
         // Append any new or remaining elements
         orderedChildren.push(...remainingChildren);
         orderedChildren.forEach(el => navContainer.appendChild(el));
+        }
       } catch(e) {
         console.error(e);
       }
@@ -618,7 +620,8 @@ function loadFromLocalStorage() {
   const savedCategoryOrder = localStorage.getItem('neon_planner_category_order');
   if (savedCategoryOrder) {
     try {
-      state.categoryOrder = JSON.parse(savedCategoryOrder);
+      const parsed = JSON.parse(savedCategoryOrder);
+      state.categoryOrder = Array.isArray(parsed) ? parsed : [];
     } catch(e) {
       state.categoryOrder = [];
     }
