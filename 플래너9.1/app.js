@@ -397,6 +397,10 @@ function init() {
       animation: 150,
       delay: 200,
       delayOnTouchOnly: true,
+      touchStartThreshold: 5,
+      fallbackTolerance: 5,
+      forceFallback: true,
+      fallbackOnBody: true,
       ghostClass: 'sortable-ghost',
       onEnd: () => {
         const newOrder = Array.from(navContainer.children).map(child => {
@@ -5048,6 +5052,10 @@ function renderCategoryFilterTabs() {
       animation: 150,
       delay: 200, // 200ms long press to drag
       delayOnTouchOnly: true, // Only delay on touch devices so desktop can drag instantly
+      touchStartThreshold: 5,
+      fallbackTolerance: 5,
+      forceFallback: true,
+      fallbackOnBody: true,
       ghostClass: 'sortable-ghost',
       onEnd: () => {
         // Update state.categoryOrder based on DOM
