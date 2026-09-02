@@ -3418,7 +3418,11 @@ function setupEventListeners() {
     btnTodoCancel.addEventListener('click', closeTodoEditModal);
   }
   if (todoEditBackdrop) {
-    todoEditBackdrop.addEventListener('click', closeTodoEditModal);
+    todoEditBackdrop.addEventListener('click', () => {
+      const saveBtn = document.getElementById('btn-todo-edit-save');
+      if (saveBtn) saveBtn.click();
+      else closeTodoEditModal();
+    });
   }
 
   const btnTodoClearTime = document.getElementById('btn-todo-edit-clear-time');
@@ -5516,9 +5520,13 @@ function renderDiary() {
             e.stopPropagation();
             e.preventDefault();
             openFullscreenDrawing(record.drawing, (data, isClosing) => {
-              record.drawing = data;
-              saveDiaries();
-              if (isClosing) renderDiary();
+              const currentDayDiaries = state.diaries[dateKey] || [];
+              const currentRecord = currentDayDiaries.find(r => r.id === record.id);
+              if (currentRecord) {
+                currentRecord.drawing = data ? JSON.parse(JSON.stringify(data)) : [];
+                saveDiaries();
+                if (isClosing) renderDiary();
+              }
             });
           };
           viewDrawingContainer.addEventListener('click', openDirectEdit);
@@ -7725,7 +7733,20 @@ function renderTodos() {
 
     const textSpan = document.createElement('span');
     textSpan.classList.add('todo-text');
-    textSpan.innerHTML = highlightMarkup(linkify(todo.text), state.searchQuery);
+    let titleHtml = highlightMarkup(linkify(todo.text), state.searchQuery);
+    
+    // Add indicators if attachments exist
+    let indicators = '';
+    if (todo.memo && todo.memo.trim() !== '') indicators += '📝';
+    if ((todo.memoImages && todo.memoImages.length > 0) || (todo.memoVideos && todo.memoVideos.length > 0)) indicators += '🖼️';
+    if (hasDrawingData(todo.memoDrawing)) indicators += '🎨';
+    if (todo.memoAudio && todo.memoAudio.length > 0) indicators += '🎙️';
+    
+    if (indicators) {
+      titleHtml += ` <span class="todo-attachment-indicators" style="font-size: 0.85em; margin-left: 6px; opacity: 0.8;" title="첨부됨">${indicators}</span>`;
+    }
+    
+    textSpan.innerHTML = titleHtml;
     // Double-click or click on text to edit
     // Single-click to toggle dates viewer
     textSpan.addEventListener('click', (e) => {
@@ -7825,12 +7846,51 @@ function renderTodos() {
     itemLeft.appendChild(textSpan);
     itemLeft.appendChild(metaDiv);
     
+    const hasAttachments = (todo.memo && todo.memo.trim() !== '') || 
+                           (todo.memoImages && todo.memoImages.length > 0) || 
+                           (todo.memoVideos && todo.memoVideos.length > 0) || 
+                           hasDrawingData(todo.memoDrawing) || 
+                           (todo.memoAudio && todo.memoAudio.length > 0);
+
+    const attachmentsContainer = document.createElement('div');
+    attachmentsContainer.className = 'todo-attachments-container';
+    attachmentsContainer.style.display = 'none'; // Hidden by default
+    attachmentsContainer.style.marginTop = '8px';
+    attachmentsContainer.style.padding = '8px';
+    attachmentsContainer.style.backgroundColor = 'var(--panel-bg, rgba(255,255,255,0.03))';
+    attachmentsContainer.style.borderRadius = '6px';
+    attachmentsContainer.style.border = '1px solid var(--panel-border)';
+
+    if (hasAttachments) {
+      const toggleBtn = document.createElement('div');
+      toggleBtn.className = 'todo-attachments-toggle';
+      toggleBtn.innerHTML = '📎 첨부 및 메모 펼치기 ▼';
+      toggleBtn.style.cssText = 'cursor:pointer; color:var(--text-muted); font-size:0.8rem; margin-top:4px; user-select:none; display:inline-block;';
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isHidden = attachmentsContainer.style.display === 'none';
+        attachmentsContainer.style.display = isHidden ? 'block' : 'none';
+        toggleBtn.innerHTML = isHidden ? '📎 첨부 및 메모 접기 ▲' : '📎 첨부 및 메모 펼치기 ▼';
+      });
+      itemLeft.appendChild(toggleBtn);
+    }
+
     // Memo rendering
     if (todo.memo && todo.memo.trim() !== '') {
       const memoDiv = document.createElement('div');
       memoDiv.className = 'todo-memo-text';
       memoDiv.innerHTML = linkify(todo.memo).replace(/\n/g, '<br>');
-      itemLeft.appendChild(memoDiv);
+      memoDiv.title = '클릭하여 메모 수정하기';
+      memoDiv.style.cursor = 'pointer';
+      memoDiv.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openTodoEditModal(todo.id);
+        setTimeout(() => {
+          const memoInput = document.getElementById('todo-edit-modal-memo');
+          if (memoInput) memoInput.focus();
+        }, 100);
+      });
+      attachmentsContainer.appendChild(memoDiv);
     }
     
     // Memo Photos rendering
@@ -7862,13 +7922,18 @@ function renderTodos() {
         mediaContainer.style.pointerEvents = 'none'; 
         thumb.appendChild(mediaContainer);
         
+        thumb.title = '클릭하여 미리보기 (수정은 더블클릭)';
         thumb.addEventListener('click', (e) => {
           e.stopPropagation();
           openLightbox(todo.memoImages, idx, true);
         });
+        thumb.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          openTodoEditModal(todo.id);
+        });
         memoPhotosDiv.appendChild(thumb);
       });
-      itemLeft.appendChild(memoPhotosDiv);
+      attachmentsContainer.appendChild(memoPhotosDiv);
     }
 
     if (todo.memoVideos && todo.memoVideos.length > 0) {
@@ -7895,39 +7960,32 @@ function renderTodos() {
         mediaContainer.style.pointerEvents = 'none'; 
         thumb.appendChild(mediaContainer);
         
+        thumb.title = '클릭하여 미리보기 (수정은 더블클릭)';
         thumb.addEventListener('click', (e) => {
           e.stopPropagation();
           openLightbox(todo.memoVideos, idx, true);
         });
+        thumb.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          openTodoEditModal(todo.id);
+        });
         memoVideosDiv.appendChild(thumb);
       });
-      itemLeft.appendChild(memoVideosDiv);
+      attachmentsContainer.appendChild(memoVideosDiv);
     }
 
     // Memo Drawing rendering
-    // Memo Drawing rendering
     if (hasDrawingData(todo.memoDrawing)) {
-      const drawingToggleBtn = document.createElement('div');
-      drawingToggleBtn.className = 'record-drawing-toggle';
-      drawingToggleBtn.innerHTML = '🖼️ 첨부된 그림 보기 (클릭)';
-      drawingToggleBtn.style.cssText = 'cursor:pointer; color:#3b82f6; font-size:0.85rem; margin-top:6px; padding:6px; background:var(--panel-bg, rgba(255,255,255,0.05)); border-radius:4px; text-align:center; border: 1px dashed var(--panel-border, #333);';
-      itemLeft.appendChild(drawingToggleBtn);
-
       const viewDrawingContainer = document.createElement('div');
       viewDrawingContainer.className = 'diary-drawing-container view-mode';
       viewDrawingContainer.style.marginTop = '6px';
       viewDrawingContainer.style.width = '100%';
-      viewDrawingContainer.style.display = 'none';
-      itemLeft.appendChild(viewDrawingContainer);
+      viewDrawingContainer.style.display = 'block'; // Show directly in the expanded container
+      attachmentsContainer.appendChild(viewDrawingContainer);
 
-      drawingToggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        drawingToggleBtn.style.display = 'none';
-        viewDrawingContainer.style.display = 'block';
-        new NeonDrawingBoard(viewDrawingContainer, {
-          initialData: todo.memoDrawing,
-          readOnly: true
-        });
+      new NeonDrawingBoard(viewDrawingContainer, {
+        initialData: todo.memoDrawing,
+        readOnly: true
       });
       
       viewDrawingContainer.style.cursor = 'pointer';
@@ -7936,9 +7994,13 @@ function renderTodos() {
         e.stopPropagation();
         e.preventDefault();
         openFullscreenDrawing(todo.memoDrawing, (data, isClosing) => {
-          todo.memoDrawing = data;
-          saveTodos();
-          if (isClosing) renderTodos();
+          const currentDayTodos = state.todos[dateKey] || [];
+          const currentTodo = currentDayTodos.find(t => t.id === todo.id);
+          if (currentTodo) {
+            currentTodo.memoDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
+            saveTodos();
+            if (isClosing) renderTodos();
+          }
         });
       };
       viewDrawingContainer.addEventListener('click', openDirectEdit);
@@ -7952,11 +8014,15 @@ function renderTodos() {
       audioViewContainer.style.marginTop = '6px';
       audioViewContainer.style.width = '100%';
       
-      itemLeft.appendChild(audioViewContainer);
+      attachmentsContainer.appendChild(audioViewContainer);
       
       setTimeout(() => {
         renderAudioPreviews(audioViewContainer.id || (audioViewContainer.id = `view-audio-todo-${todo.id}`), todo.memoAudio, null);
       }, 0);
+    }
+
+    if (hasAttachments) {
+      itemLeft.appendChild(attachmentsContainer);
     }
 
     // Action buttons container
@@ -8579,6 +8645,7 @@ function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
           onClick();
         });
       }
+      if (delBtn) container.appendChild(delBtn);
       return container; // Done — no async load needed for thumbnails
     }
 

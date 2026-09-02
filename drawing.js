@@ -24,7 +24,18 @@ class NeonDrawingBoard {
     if (options.initialData && !Array.isArray(options.initialData) && options.initialData.type === 'pdf_drawing') {
       this.isMultiPage = true;
       this.pdfFileId = options.initialData.pdfFileId;
-      this._pages = options.initialData.strokesPerPage.map(st => ({ type: 'pdf', _strokes: st, bgCanvas: null }));
+      if (options.initialData.pages) {
+        this._pages = options.initialData.pages.map(p => ({
+          type: p.type || 'pdf',
+          pdfPageNum: p.pdfPageNum,
+          width: p.width,
+          height: p.height,
+          _strokes: p._strokes || [],
+          bgCanvas: null
+        }));
+      } else {
+        this._pages = options.initialData.strokesPerPage.map((st, i) => ({ type: 'pdf', pdfPageNum: i + 1, _strokes: st, bgCanvas: null }));
+      }
       this.loadExistingPdf();
     } else {
       this.strokes = options.initialData ? JSON.parse(JSON.stringify(options.initialData)) : [];
@@ -62,7 +73,7 @@ class NeonDrawingBoard {
     this.points = [];
     this.holdTimer = null;
     this.isSnapped = false;
-    this.penOnlyMode = false; // Allow touch drawing by default
+    this.penOnlyMode = true; // Pen mode by default
 
     // Pan and Zoom
     this.viewScale = 1;
@@ -106,9 +117,17 @@ class NeonDrawingBoard {
       this.sidebar.className = 'drawing-sidebar hidden';
       this.sidebar.innerHTML = `
       <div class="sidebar-header">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="color:#fff; font-size:0.9rem; font-weight:bold;">페이지 미리보기</span>
+          <button type="button" id="btn-close-sidebar" title="미리보기 닫기 (위쪽 📑 버튼으로 다시 열 수 있습니다)" style="background:none; border:none; color:#fff; font-size:1.4rem; cursor:pointer; line-height:1;">&times;</button>
+        </div>
         <label class="sidebar-btn" style="display:block; text-align:center; cursor:pointer;">
           📄 PDF 불러오기
           <input type="file" id="pdf-import-input" accept="application/pdf" style="display:none">
+        </label>
+        <label class="sidebar-btn" style="display:block; width:100%; text-align:center; margin-top:6px; padding:8px; background:rgba(255,255,255,0.1); border:1px dashed #888; border-radius:8px; color:#fff; cursor:pointer; font-size:0.9rem;">
+          🖼️ 사진 불러오기
+          <input type="file" id="image-import-input" accept="image/*" style="display:none">
         </label>
         <button type="button" id="btn-add-blank-page" class="sidebar-btn" style="display:block; width:100%; text-align:center; margin-top:6px; padding:8px; background:rgba(255,255,255,0.1); border:1px dashed #888; border-radius:8px; color:#fff; cursor:pointer; font-size:0.9rem;">
           ➕ 빈 페이지 추가
@@ -118,7 +137,12 @@ class NeonDrawingBoard {
     `;
       this.container.appendChild(this.sidebar);
 
+      this.sidebar.querySelector('#btn-close-sidebar').addEventListener('click', () => {
+        this.sidebar.classList.add('hidden');
+      });
+
       this.sidebar.querySelector('#pdf-import-input').addEventListener('change', (e) => this.handlePdfImport(e));
+      this.sidebar.querySelector('#image-import-input').addEventListener('change', (e) => this.handleImageImport(e));
 
       // Add blank page button
       const btnAddBlankPage = this.sidebar.querySelector('#btn-add-blank-page');
@@ -205,12 +229,12 @@ class NeonDrawingBoard {
       </div>
       <div class="drawing-actions">
         <button class="action-btn" id="btn-save-image" title="이미지로 저장">💾</button>
-        <button class="action-btn" id="btn-toggle-sidebar" title="페이지 목록">📑</button>
+        <button class="action-btn" id="btn-toggle-sidebar" title="페이지 미리보기(사이드바) 켜기/끄기">📑</button>
         <button class="action-btn" id="btn-export-pdf" title="PDF로 다운로드" style="display:none">📥</button>
         <button class="action-btn" id="btn-zoom-out" title="축소">➖</button>
         <button class="action-btn" id="btn-reset-view" title="1:1 화면 초기화">🔍</button>
         <button class="action-btn" id="btn-zoom-in" title="확대">➕</button>
-        <button class="action-btn" id="btn-pen-mode" title="손가락 그리기 허용됨 (클릭하여 펜 전용 모드로 전환)">👆</button>
+        <button class="action-btn active" id="btn-pen-mode" title="펜 전용 모드 켜짐 (클릭하여 손가락 그리기 허용)">🖊️</button>
         <button class="action-btn" id="btn-undo" title="실행 취소">↩️</button>
         <button class="action-btn" id="btn-redo" title="다시 실행">↪️</button>
         <button class="action-btn" id="btn-clear" title="전체 지우기">🗑️</button>
@@ -481,8 +505,9 @@ class NeonDrawingBoard {
         let minX = 0, minY = 0, maxX = this.canvas.width, maxY = this.canvas.height;
         let hasStrokes = false;
 
-        this.strokes.forEach(s => {
+        this.getCurrentStrokes().forEach(s => {
           if (s.isBg) return;
+          if (!s.points || s.points.length === 0) return;
           s.points.forEach(p => {
             if (!hasStrokes) { minX = maxX = p.x; minY = maxY = p.y; hasStrokes = true; }
             if (p.x < minX) minX = p.x;
@@ -818,7 +843,29 @@ class NeonDrawingBoard {
       return;
     }
 
-    const pos = this.getPointerPos(e);
+    let pos = this.getPointerPos(e);
+
+    // Auto-expand canvas height and pan if near the vertical edges while drawing or dragging
+    if (this.isDrawing || this.isDraggingSelection) {
+      const containerHeight = this.canvasContainer.clientHeight;
+      let physicalY = pos.y * this.viewScale + this.panY;
+      let panned = false;
+
+      if (physicalY > containerHeight - 80) {
+        this.panY -= 15 / this.viewScale;
+        panned = true;
+      } else if (physicalY < 80 && this.panY < 0) {
+        this.panY += 15 / this.viewScale;
+        if (this.panY > 0) this.panY = 0;
+        panned = true;
+      }
+
+      if (panned) {
+        pos = this.getPointerPos(e); // Recalculate logical pos after pan
+        physicalY = pos.y * this.viewScale + this.panY;
+        this.canvasContainer.style.minHeight = `${Math.max(this.canvasContainer.clientHeight, (physicalY + 300))}px`;
+      }
+    }
 
     if (this.isDraggingSelection) {
       const dx = pos.x - this.dragStartPoint.x;
@@ -833,16 +880,6 @@ class NeonDrawingBoard {
     }
 
     if (!this.isDrawing) return;
-
-    // Auto-expand canvas height if drawing near the bottom
-    const containerHeight = this.canvasContainer.clientHeight;
-    const physicalY = pos.y * this.viewScale + this.panY;
-    if (pos.y > containerHeight - 80) {
-      // Auto-pan down (moves the canvas up)
-      this.panY -= 15 / this.viewScale;
-      // Also update the canvas minHeight to allow native scrollbars to grow if desired
-      this.canvasContainer.style.minHeight = `${Math.max(this.canvasContainer.clientHeight, (physicalY + 300))}px`;
-    }
 
     const activeTool = this.isTempEraser ? 'eraser' : this.currentTool;
 
@@ -888,7 +925,7 @@ class NeonDrawingBoard {
 
     if (activeTool === 'pen' || activeTool === 'highlighter') {
       if (this.currentStroke && this.currentStroke.points.length > 0) {
-        this.strokes.push(this.currentStroke);
+        this.getCurrentStrokes().push(this.currentStroke);
         this.saveState();
       }
       this.currentStroke = null;
@@ -932,11 +969,13 @@ class NeonDrawingBoard {
   eraseAt(pos) {
     const eraseRadius = 15;
     let erased = false;
-    for (let i = this.strokes.length - 1; i >= 0; i--) {
-      const stroke = this.strokes[i];
+    let currentStrokes = this.getCurrentStrokes();
+    for (let i = currentStrokes.length - 1; i >= 0; i--) {
+      const stroke = currentStrokes[i];
       if (stroke.isBg || !stroke.points) continue;
+      if (stroke.tool === 'image') continue;
       if (this.isPointNearStroke(pos, stroke, eraseRadius)) {
-        this.strokes.splice(i, 1);
+        currentStrokes.splice(i, 1);
         erased = true;
         break; // Erase one at a time
       }
@@ -970,7 +1009,7 @@ class NeonDrawingBoard {
     this.selectedStrokes = [];
     if (this.lassoPoints.length < 3) return;
 
-    this.strokes.forEach(stroke => {
+    this.getCurrentStrokes().forEach(stroke => {
       if (stroke.isBg || !stroke.points) return;
       let insideCount = 0;
       stroke.points.forEach(p => {
@@ -985,6 +1024,24 @@ class NeonDrawingBoard {
   clearSelection() {
     this.selectedStrokes = [];
     this.render();
+  }
+
+  getCurrentStrokes() {
+    if (this.isMultiPage && this._pages && this._pages.length > 0 && this.currentPageIndex >= 0 && this.currentPageIndex < this._pages.length) {
+      if (!this._pages[this.currentPageIndex]._strokes) {
+        this._pages[this.currentPageIndex]._strokes = [];
+      }
+      return this._pages[this.currentPageIndex]._strokes;
+    }
+    return this.strokes;
+  }
+
+  setCurrentStrokes(newStrokes) {
+    if (this.isMultiPage && this._pages && this._pages.length > 0 && this.currentPageIndex >= 0 && this.currentPageIndex < this._pages.length) {
+      this._pages[this.currentPageIndex]._strokes = newStrokes;
+    } else {
+      this.strokes = newStrokes;
+    }
   }
 
   isPointInPolygon(point, vs) {
@@ -1015,19 +1072,16 @@ class NeonDrawingBoard {
   }
 
   saveState() {
-    this.undoStack.push(JSON.parse(JSON.stringify(this.strokes)));
+    this.undoStack.push(JSON.parse(JSON.stringify(this.getCurrentStrokes())));
     if (this.undoStack.length > 50) this.undoStack.shift();
     this.redoStack = [];
-    if (this.isMultiPage && this.currentPageIndex >= 0) {
-      this._pages[this.currentPageIndex]._strokes = JSON.parse(JSON.stringify(this.strokes));
-    }
     if (this.onChange) this.onChange(this.getData());
   }
 
   undo() {
     if (this.undoStack.length > 0) {
-      this.redoStack.push(JSON.parse(JSON.stringify(this.strokes)));
-      this.strokes = this.undoStack.pop();
+      this.redoStack.push(JSON.parse(JSON.stringify(this.getCurrentStrokes())));
+      this.setCurrentStrokes(this.undoStack.pop());
       this.clearSelection();
       this.render();
       if (this.onChange) this.onChange(this.getData());
@@ -1036,8 +1090,8 @@ class NeonDrawingBoard {
 
   redo() {
     if (this.redoStack.length > 0) {
-      this.undoStack.push(JSON.parse(JSON.stringify(this.strokes)));
-      this.strokes = this.redoStack.pop();
+      this.undoStack.push(JSON.parse(JSON.stringify(this.getCurrentStrokes())));
+      this.setCurrentStrokes(this.redoStack.pop());
       this.clearSelection();
       this.render();
       if (this.onChange) this.onChange(this.getData());
@@ -1045,15 +1099,84 @@ class NeonDrawingBoard {
   }
 
   clearAll() {
-    if (this.strokes.length > 0) {
+    let strokes = this.getCurrentStrokes();
+    if (strokes.length > 0) {
       this.saveState();
-      this.strokes = this.strokes.filter(s => s.isBg);
+      this.setCurrentStrokes(strokes.filter(s => s.isBg));
       this.clearSelection();
       this.render();
       if (this.onChange) this.onChange(this.getData());
     }
   }
 
+
+  handleImageImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1200;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width > height) {
+            height = Math.round(height * (MAX_DIM / width));
+            width = MAX_DIM;
+          } else {
+            width = Math.round(width * (MAX_DIM / height));
+            height = MAX_DIM;
+          }
+        }
+
+        const cvs = document.createElement('canvas');
+        cvs.width = width;
+        cvs.height = height;
+        const ctx = cvs.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = cvs.toDataURL('image/jpeg', 0.85);
+
+        // Calculate center of current view in logical coordinates
+        const rect = this.canvasContainer.getBoundingClientRect();
+        const centerX = (-this.panX + rect.width / 2) / this.viewScale;
+        const centerY = (-this.panY + rect.height / 2) / this.viewScale;
+
+        // Ensure it fits within view roughly if it's too big
+        let displayWidth = width;
+        let displayHeight = height;
+        const maxDisplayWidth = (rect.width * 0.8) / this.viewScale;
+        if (displayWidth > maxDisplayWidth) {
+          const ratio = maxDisplayWidth / displayWidth;
+          displayWidth *= ratio;
+          displayHeight *= ratio;
+        }
+
+        const imgStroke = {
+          tool: 'image',
+          imgData: dataUrl,
+          opacity: 1,
+          points: [
+            { x: centerX - displayWidth / 2, y: centerY - displayHeight / 2 },
+            { x: centerX + displayWidth / 2, y: centerY - displayHeight / 2 },
+            { x: centerX + displayWidth / 2, y: centerY + displayHeight / 2 },
+            { x: centerX - displayWidth / 2, y: centerY + displayHeight / 2 }
+          ],
+          isShape: false
+        };
+
+        this.getCurrentStrokes().push(imgStroke);
+
+        this.saveState();
+        this.render();
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }
 
   async handlePdfImport(e) {
     const file = e.target.files[0];
@@ -1069,10 +1192,13 @@ class NeonDrawingBoard {
       const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
       this.pdfFileId = await FileDB.saveFile(blob, 'pdf', file.name);
 
-      this.isMultiPage = true;
-      this._pages = [];
-      this.undoStack = [];
-      this.redoStack = [];
+      if (!this.isMultiPage) {
+        this.isMultiPage = true;
+        const currentStrokes = this._pages[0] ? this._pages[0]._strokes : this.strokes;
+        this._pages = [{ type: 'blank', _strokes: currentStrokes, bgCanvas: null }];
+      }
+      
+      const startIdx = this._pages.length;
 
       const scale = 2.0; // High resolution rendering
       for (let i = 1; i <= pdf.numPages; i++) {
@@ -1096,10 +1222,12 @@ class NeonDrawingBoard {
         });
       }
 
-      this.currentPageIndex = 0;
+      this.currentPageIndex = startIdx > 0 ? startIdx : 0;
       this.updateSidebar();
+      this.sidebar.classList.remove('hidden');
       const expBtn = this.toolbar.querySelector("#btn-export-pdf"); if (expBtn) expBtn.style.display = "inline-block";
       this.resetViewToPage();
+      if (this.onChange) this.onChange(this.getData());
     } catch (err) {
       console.error("PDF Import Error:", err);
       alert("PDF를 불러오는 중 오류가 발생했습니다.");
@@ -1116,18 +1244,19 @@ class NeonDrawingBoard {
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       const scale = 2.0;
 
-      for (let i = 1; i <= pdf.numPages; i++) {
-        if (i - 1 < this._pages.length) {
-          const page = await pdf.getPage(i);
+      for (let i = 0; i < this._pages.length; i++) {
+        const pageMeta = this._pages[i];
+        if (pageMeta.type === 'pdf' && pageMeta.pdfPageNum && pageMeta.pdfPageNum <= pdf.numPages) {
+          const page = await pdf.getPage(pageMeta.pdfPageNum);
           const viewport = page.getViewport({ scale });
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
           await page.render({ canvasContext: ctx, viewport }).promise;
-          this._pages[i - 1].bgCanvas = canvas;
-          this._pages[i - 1].width = viewport.width;
-          this._pages[i - 1].height = viewport.height;
+          pageMeta.bgCanvas = canvas;
+          pageMeta.width = viewport.width;
+          pageMeta.height = viewport.height;
         }
       }
       this.updateSidebar();
@@ -1204,6 +1333,35 @@ class NeonDrawingBoard {
       num.textContent = (idx + 1);
       thumb.appendChild(num);
 
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'page-thumbnail-delete';
+      deleteBtn.innerHTML = '✖';
+      deleteBtn.title = '이 페이지 삭제';
+      deleteBtn.style.cssText = 'position:absolute; top:4px; right:4px; background:rgba(255,0,0,0.8); color:white; border:none; border-radius:50%; width:20px; height:20px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:10; opacity:0; transition:opacity 0.2s;';
+      
+      thumb.addEventListener('mouseenter', () => deleteBtn.style.opacity = '1');
+      thumb.addEventListener('mouseleave', () => deleteBtn.style.opacity = '0');
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this._pages.length <= 1) {
+          alert('마지막 페이지는 삭제할 수 없습니다.');
+          return;
+        }
+        if (confirm('이 페이지를 삭제하시겠습니까?')) {
+          this._pages.splice(idx, 1);
+          if (this.currentPageIndex >= this._pages.length) {
+            this.currentPageIndex = this._pages.length - 1;
+          } else if (this.currentPageIndex > idx) {
+            this.currentPageIndex--;
+          }
+          this.updateSidebar();
+          this.resetViewToPage();
+          if (this.onChange) this.onChange(this.getData());
+        }
+      });
+      thumb.appendChild(deleteBtn);
+
       thumb.addEventListener('click', () => this.switchPage(idx));
 
       // Drag and drop
@@ -1247,7 +1405,14 @@ class NeonDrawingBoard {
       return {
         type: 'pdf_drawing',
         pdfFileId: this.pdfFileId,
-        strokesPerPage: JSON.parse(JSON.stringify(this._pages.map(p => p._strokes)))
+        strokesPerPage: JSON.parse(JSON.stringify(this._pages.map(p => p._strokes))),
+        pages: JSON.parse(JSON.stringify(this._pages.map(p => ({
+          type: p.type,
+          pdfPageNum: p.pdfPageNum,
+          width: p.width,
+          height: p.height,
+          _strokes: p._strokes
+        }))))
       };
     }
     return JSON.parse(JSON.stringify(this.strokes));
@@ -1255,10 +1420,11 @@ class NeonDrawingBoard {
 
 
   fitContent() {
-    if (!this.strokes || this.strokes.length === 0) return;
+    let strokes = this.getCurrentStrokes();
+    if (!strokes || strokes.length === 0) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     let hasStrokes = false;
-    this.strokes.forEach(s => {
+    strokes.forEach(s => {
       if (s.isBg) return;
       if (!s.points || s.points.length === 0) return;
       const size = s.size || 2;
@@ -1348,7 +1514,7 @@ class NeonDrawingBoard {
 
 
     // Draw saved strokes
-    this.strokes.forEach(stroke => this.drawStroke(stroke));
+    this.getCurrentStrokes().forEach(stroke => this.drawStroke(stroke));
 
     // Draw current stroke
     if (this.currentStroke) {
@@ -1402,6 +1568,28 @@ class NeonDrawingBoard {
 
   drawStroke(stroke, isHighlight = false) {
     if (stroke.isBg) return;
+
+    if (stroke.tool === 'image') {
+      if (!stroke.imgElement) {
+        stroke.imgElement = new Image();
+        stroke.imgElement.onload = () => this.render();
+        stroke.imgElement.src = stroke.imgData;
+      }
+      if (stroke.points && stroke.points.length >= 4 && stroke.imgElement.complete) {
+        this.ctx.save();
+        if (isHighlight) {
+          this.ctx.globalAlpha = 0.5; // highlight effect
+        } else {
+          this.ctx.globalAlpha = stroke.opacity || 1;
+        }
+        const w = stroke.points[1].x - stroke.points[0].x;
+        const h = stroke.points[2].y - stroke.points[1].y;
+        this.ctx.drawImage(stroke.imgElement, stroke.points[0].x, stroke.points[0].y, w, h);
+        this.ctx.restore();
+      }
+      return;
+    }
+
     if (!stroke.points || stroke.points.length === 0) return;
 
     this.ctx.save();
