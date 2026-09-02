@@ -359,6 +359,57 @@ function init() {
 
   // Initialize Routines Panel
   initRoutinesPanel();
+  
+  initNavSortable();
+
+  function initNavSortable() {
+    const navContainer = document.getElementById('header-buttons-list');
+    if (!navContainer || typeof Sortable === 'undefined') return;
+
+    // Load saved order
+    const savedOrderJson = localStorage.getItem('neon_planner_nav_order');
+    if (savedOrderJson) {
+      try {
+        const savedOrder = JSON.parse(savedOrderJson);
+        const children = Array.from(navContainer.children);
+        const orderedChildren = [];
+        const remainingChildren = [...children];
+
+        savedOrder.forEach(id => {
+          const elIndex = remainingChildren.findIndex(el => el.id === id || (id === 'gdrive-group' && el.classList.contains('header-gdrive-group')));
+          if (elIndex !== -1) {
+            orderedChildren.push(remainingChildren[elIndex]);
+            remainingChildren.splice(elIndex, 1);
+          }
+        });
+        
+        // Append any new or remaining elements
+        orderedChildren.push(...remainingChildren);
+        orderedChildren.forEach(el => navContainer.appendChild(el));
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    Sortable.create(navContainer, {
+      animation: 150,
+      delay: 200,
+      delayOnTouchOnly: true,
+      ghostClass: 'sortable-ghost',
+      onEnd: () => {
+        const newOrder = Array.from(navContainer.children).map(child => {
+          if (child.id) return child.id;
+          if (child.classList.contains('header-gdrive-group')) return 'gdrive-group';
+          return null;
+        }).filter(id => id);
+        
+        localStorage.setItem('neon_planner_nav_order', JSON.stringify(newOrder));
+        if (typeof triggerGDriveAutoSync === 'function') {
+          triggerGDriveAutoSync();
+        }
+      }
+    });
+  }
 
   // Initialize SortableJS for drag-and-drop
   if (typeof Sortable !== 'undefined' && todoItemsList) {
@@ -562,6 +613,17 @@ function loadFromLocalStorage() {
     }
     state.categories = { ...DEFAULT_CATEGORIES, ...customCategories };
     localStorage.setItem('neon_planner_categories', JSON.stringify(state.categories));
+  }
+  
+  const savedCategoryOrder = localStorage.getItem('neon_planner_category_order');
+  if (savedCategoryOrder) {
+    try {
+      state.categoryOrder = JSON.parse(savedCategoryOrder);
+    } catch(e) {
+      state.categoryOrder = [];
+    }
+  } else {
+    state.categoryOrder = [];
   }
 
   const savedDiaries = localStorage.getItem('neon_planner_diaries');
@@ -4856,6 +4918,8 @@ function renderCategoryFilterTabs() {
 
   const activeFilter = state.todoFilterCategory || 'all';
 
+  const tabElements = {};
+
   // 1. "전체" (All) Tab
   const allTab = document.createElement('button');
   allTab.type = 'button';
@@ -4871,7 +4935,7 @@ function renderCategoryFilterTabs() {
   allTab.addEventListener('click', () => {
     handleSelectTodoFilterCategory('all');
   });
-  container.appendChild(allTab);
+  tabElements['all'] = allTab;
 
   // 2. "루틴" (Routine) Tab
   const routineTab = document.createElement('button');
@@ -4904,7 +4968,7 @@ function renderCategoryFilterTabs() {
   routineTab.addEventListener('click', () => {
     handleSelectTodoFilterCategory('routine');
   });
-  container.appendChild(routineTab);
+  tabElements['routine'] = routineTab;
 
   // 3. Individual Category Tabs
   Object.keys(state.categories).forEach(catId => {
@@ -4951,8 +5015,48 @@ function renderCategoryFilterTabs() {
       handleSelectTodoFilterCategory(catId);
     });
 
-    container.appendChild(tab);
+    tabElements[catId] = tab;
   });
+
+  // Ensure state.categoryOrder has all current tabs
+  const currentCats = ['all', 'routine', ...Object.keys(state.categories)];
+  currentCats.forEach(c => {
+    if (!state.categoryOrder.includes(c)) {
+      state.categoryOrder.push(c);
+    }
+  });
+  
+  // Clean up deleted categories from order
+  state.categoryOrder = state.categoryOrder.filter(c => currentCats.includes(c));
+
+  // Append in order
+  state.categoryOrder.forEach(catId => {
+    if (tabElements[catId]) {
+      container.appendChild(tabElements[catId]);
+    }
+  });
+
+  // Initialize SortableJS
+  if (typeof Sortable !== 'undefined') {
+    if (container.sortableInstance) {
+      container.sortableInstance.destroy();
+    }
+    container.sortableInstance = Sortable.create(container, {
+      animation: 150,
+      delay: 200, // 200ms long press to drag
+      delayOnTouchOnly: true, // Only delay on touch devices so desktop can drag instantly
+      ghostClass: 'sortable-ghost',
+      onEnd: () => {
+        // Update state.categoryOrder based on DOM
+        const newOrder = Array.from(container.children)
+          .map(child => child.dataset.category)
+          .filter(c => c); // Ensure no nulls
+        state.categoryOrder = newOrder;
+        localStorage.setItem('neon_planner_category_order', JSON.stringify(state.categoryOrder));
+        triggerGDriveAutoSync();
+      }
+    });
+  }
 }
 
 // Render Dynamic Category Selection Pills
@@ -6006,44 +6110,91 @@ function renderTimeline() {
           btnRow.appendChild(cancelBtn);
 
           diaryCard.appendChild(btnRow);
-        } else {
-          // Emotion + Text View
+          let isExpanded = false;
+
+          const headerRow = document.createElement('div');
+          headerRow.style.display = 'flex';
+          headerRow.style.justifyContent = 'space-between';
+          headerRow.style.alignItems = 'flex-start';
+          headerRow.style.cursor = 'pointer';
+
           const textBlock = document.createElement('div');
           textBlock.className = 'timeline-diary-text';
+          textBlock.style.flex = '1';
+          textBlock.style.margin = '0';
           
-          if (record.emotion) {
-            const emotionSpan = document.createElement('span');
-            emotionSpan.style = 'margin-right: 6px; font-size: 1.1rem;';
-            emotionSpan.textContent = record.emotion;
-            textBlock.appendChild(emotionSpan);
+          const toggleIcon = document.createElement('span');
+          toggleIcon.style.marginLeft = '8px';
+          toggleIcon.style.fontSize = '0.8rem';
+          toggleIcon.style.color = 'var(--text-muted)';
+          toggleIcon.style.paddingTop = '4px';
+          toggleIcon.innerHTML = '▼';
+
+          const renderText = () => {
+            textBlock.innerHTML = '';
+            if (record.emotion) {
+              const emotionSpan = document.createElement('span');
+              emotionSpan.style = 'margin-right: 6px; font-size: 1.1rem;';
+              emotionSpan.textContent = record.emotion;
+              textBlock.appendChild(emotionSpan);
+            }
+            const spanContent = document.createElement('span');
+            spanContent.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
+            textBlock.appendChild(spanContent);
+
+            if (!isExpanded) {
+              textBlock.style.display = '-webkit-box';
+              textBlock.style.webkitLineClamp = '2';
+              textBlock.style.webkitBoxOrient = 'vertical';
+              textBlock.style.overflow = 'hidden';
+            } else {
+              textBlock.style.display = 'block';
+              textBlock.style.webkitLineClamp = 'unset';
+              textBlock.style.overflow = 'visible';
+            }
+          };
+          renderText();
+
+          // Indicators for hidden attachments
+          const indicatorsSpan = document.createElement('span');
+          indicatorsSpan.style.fontSize = '0.85em';
+          indicatorsSpan.style.marginLeft = '6px';
+          indicatorsSpan.style.opacity = '0.8';
+          if (record.images && record.images.length > 0) {
+            indicatorsSpan.innerHTML = '🖼️';
+            textBlock.appendChild(indicatorsSpan);
           }
 
-          const spanContent = document.createElement('span');
-          spanContent.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
-          textBlock.appendChild(spanContent);
-          
-          diaryCard.appendChild(textBlock);
+          headerRow.appendChild(textBlock);
+          headerRow.appendChild(toggleIcon);
+          diaryCard.appendChild(headerRow);
 
+          // Details Container
+          const detailsContainer = document.createElement('div');
+          detailsContainer.style.display = 'none';
+          
           // Photos
           if (record.images && record.images.length > 0) {
             const imgDiv = document.createElement('div');
             imgDiv.className = 'timeline-diary-images';
+            imgDiv.style.marginTop = '8px';
             record.images.forEach((imgSrc, idx) => {
               const mediaContainer = createMediaElementAsync(imgSrc, false, () => openLightbox(record.images, idx));
               imgDiv.appendChild(mediaContainer);
             });
-            diaryCard.appendChild(imgDiv);
+            detailsContainer.appendChild(imgDiv);
           }
 
           // Inline Actions: Edit / Delete
           const actionRow = document.createElement('div');
-          actionRow.style = 'display: flex; gap: 8px; margin-top: 6px;';
+          actionRow.style = 'display: flex; gap: 8px; margin-top: 8px;';
 
           const editBtn = document.createElement('button');
           editBtn.type = 'button';
           editBtn.className = 'timeline-action-btn-safe';
           editBtn.innerHTML = '✏️ 수정';
-          editBtn.addEventListener('click', () => {
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             state.editingTimelineRecordId = record.id;
             renderTimeline();
           });
@@ -6053,7 +6204,8 @@ function renderTimeline() {
           delBtn.type = 'button';
           delBtn.className = 'timeline-action-btn-danger';
           delBtn.innerHTML = '❌ 삭제';
-          delBtn.addEventListener('click', () => {
+          delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             if (confirm('이 기록을 삭제하시겠습니까?')) {
               pushToHistory();
               state.diaries[dateKey] = state.diaries[dateKey].filter(r => r.id !== record.id);
@@ -6067,8 +6219,18 @@ function renderTimeline() {
           });
           actionRow.appendChild(delBtn);
 
-          diaryCard.appendChild(actionRow);
-        }
+          detailsContainer.appendChild(actionRow);
+          diaryCard.appendChild(detailsContainer);
+
+          headerRow.addEventListener('click', () => {
+            isExpanded = !isExpanded;
+            renderText();
+            if (!isExpanded && record.images && record.images.length > 0) {
+              textBlock.appendChild(indicatorsSpan);
+            }
+            toggleIcon.innerHTML = isExpanded ? '▲' : '▼';
+            detailsContainer.style.display = isExpanded ? 'block' : 'none';
+          });
 
         diaryContent.appendChild(diaryCard);
       });
@@ -7861,16 +8023,24 @@ function renderTodos() {
     attachmentsContainer.style.borderRadius = '6px';
     attachmentsContainer.style.border = '1px solid var(--panel-border)';
 
+    let onExpandCallbacks = [];
+
     if (hasAttachments) {
       const toggleBtn = document.createElement('div');
       toggleBtn.className = 'todo-attachments-toggle';
-      toggleBtn.innerHTML = '📎 첨부 및 메모 펼치기 ▼';
+      toggleBtn.innerHTML = '▼ 펼치기';
       toggleBtn.style.cssText = 'cursor:pointer; color:var(--text-muted); font-size:0.8rem; margin-top:4px; user-select:none; display:inline-block;';
       toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const isHidden = attachmentsContainer.style.display === 'none';
         attachmentsContainer.style.display = isHidden ? 'block' : 'none';
-        toggleBtn.innerHTML = isHidden ? '📎 첨부 및 메모 접기 ▲' : '📎 첨부 및 메모 펼치기 ▼';
+        toggleBtn.innerHTML = isHidden ? '▲ 접기' : '▼ 펼치기';
+        
+        if (isHidden) {
+          onExpandCallbacks.forEach(cb => cb());
+          // Clear callbacks after first execution so they don't run repeatedly
+          onExpandCallbacks = [];
+        }
       });
       itemLeft.appendChild(toggleBtn);
     }
@@ -7980,12 +8150,15 @@ function renderTodos() {
       viewDrawingContainer.className = 'diary-drawing-container view-mode';
       viewDrawingContainer.style.marginTop = '6px';
       viewDrawingContainer.style.width = '100%';
-      viewDrawingContainer.style.display = 'block'; // Show directly in the expanded container
+      viewDrawingContainer.style.height = '150px'; // Explicit height required
+      viewDrawingContainer.style.display = 'block'; 
       attachmentsContainer.appendChild(viewDrawingContainer);
 
-      new NeonDrawingBoard(viewDrawingContainer, {
-        initialData: todo.memoDrawing,
-        readOnly: true
+      onExpandCallbacks.push(() => {
+        new NeonDrawingBoard(viewDrawingContainer, {
+          initialData: todo.memoDrawing,
+          readOnly: true
+        });
       });
       
       viewDrawingContainer.style.cursor = 'pointer';
@@ -8016,9 +8189,11 @@ function renderTodos() {
       
       attachmentsContainer.appendChild(audioViewContainer);
       
-      setTimeout(() => {
-        renderAudioPreviews(audioViewContainer.id || (audioViewContainer.id = `view-audio-todo-${todo.id}`), todo.memoAudio, null);
-      }, 0);
+      onExpandCallbacks.push(() => {
+        setTimeout(() => {
+          renderAudioPreviews(audioViewContainer.id || (audioViewContainer.id = `view-audio-todo-${todo.id}`), todo.memoAudio, null);
+        }, 0);
+      });
     }
 
     if (hasAttachments) {
