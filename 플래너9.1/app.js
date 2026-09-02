@@ -6006,44 +6006,91 @@ function renderTimeline() {
           btnRow.appendChild(cancelBtn);
 
           diaryCard.appendChild(btnRow);
-        } else {
-          // Emotion + Text View
+          let isExpanded = false;
+
+          const headerRow = document.createElement('div');
+          headerRow.style.display = 'flex';
+          headerRow.style.justifyContent = 'space-between';
+          headerRow.style.alignItems = 'flex-start';
+          headerRow.style.cursor = 'pointer';
+
           const textBlock = document.createElement('div');
           textBlock.className = 'timeline-diary-text';
+          textBlock.style.flex = '1';
+          textBlock.style.margin = '0';
           
-          if (record.emotion) {
-            const emotionSpan = document.createElement('span');
-            emotionSpan.style = 'margin-right: 6px; font-size: 1.1rem;';
-            emotionSpan.textContent = record.emotion;
-            textBlock.appendChild(emotionSpan);
+          const toggleIcon = document.createElement('span');
+          toggleIcon.style.marginLeft = '8px';
+          toggleIcon.style.fontSize = '0.8rem';
+          toggleIcon.style.color = 'var(--text-muted)';
+          toggleIcon.style.paddingTop = '4px';
+          toggleIcon.innerHTML = '▼';
+
+          const renderText = () => {
+            textBlock.innerHTML = '';
+            if (record.emotion) {
+              const emotionSpan = document.createElement('span');
+              emotionSpan.style = 'margin-right: 6px; font-size: 1.1rem;';
+              emotionSpan.textContent = record.emotion;
+              textBlock.appendChild(emotionSpan);
+            }
+            const spanContent = document.createElement('span');
+            spanContent.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
+            textBlock.appendChild(spanContent);
+
+            if (!isExpanded) {
+              textBlock.style.display = '-webkit-box';
+              textBlock.style.webkitLineClamp = '2';
+              textBlock.style.webkitBoxOrient = 'vertical';
+              textBlock.style.overflow = 'hidden';
+            } else {
+              textBlock.style.display = 'block';
+              textBlock.style.webkitLineClamp = 'unset';
+              textBlock.style.overflow = 'visible';
+            }
+          };
+          renderText();
+
+          // Indicators for hidden attachments
+          const indicatorsSpan = document.createElement('span');
+          indicatorsSpan.style.fontSize = '0.85em';
+          indicatorsSpan.style.marginLeft = '6px';
+          indicatorsSpan.style.opacity = '0.8';
+          if (record.images && record.images.length > 0) {
+            indicatorsSpan.innerHTML = '🖼️';
+            textBlock.appendChild(indicatorsSpan);
           }
 
-          const spanContent = document.createElement('span');
-          spanContent.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
-          textBlock.appendChild(spanContent);
-          
-          diaryCard.appendChild(textBlock);
+          headerRow.appendChild(textBlock);
+          headerRow.appendChild(toggleIcon);
+          diaryCard.appendChild(headerRow);
 
+          // Details Container
+          const detailsContainer = document.createElement('div');
+          detailsContainer.style.display = 'none';
+          
           // Photos
           if (record.images && record.images.length > 0) {
             const imgDiv = document.createElement('div');
             imgDiv.className = 'timeline-diary-images';
+            imgDiv.style.marginTop = '8px';
             record.images.forEach((imgSrc, idx) => {
               const mediaContainer = createMediaElementAsync(imgSrc, false, () => openLightbox(record.images, idx));
               imgDiv.appendChild(mediaContainer);
             });
-            diaryCard.appendChild(imgDiv);
+            detailsContainer.appendChild(imgDiv);
           }
 
           // Inline Actions: Edit / Delete
           const actionRow = document.createElement('div');
-          actionRow.style = 'display: flex; gap: 8px; margin-top: 6px;';
+          actionRow.style = 'display: flex; gap: 8px; margin-top: 8px;';
 
           const editBtn = document.createElement('button');
           editBtn.type = 'button';
           editBtn.className = 'timeline-action-btn-safe';
           editBtn.innerHTML = '✏️ 수정';
-          editBtn.addEventListener('click', () => {
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             state.editingTimelineRecordId = record.id;
             renderTimeline();
           });
@@ -6053,7 +6100,8 @@ function renderTimeline() {
           delBtn.type = 'button';
           delBtn.className = 'timeline-action-btn-danger';
           delBtn.innerHTML = '❌ 삭제';
-          delBtn.addEventListener('click', () => {
+          delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             if (confirm('이 기록을 삭제하시겠습니까?')) {
               pushToHistory();
               state.diaries[dateKey] = state.diaries[dateKey].filter(r => r.id !== record.id);
@@ -6067,8 +6115,18 @@ function renderTimeline() {
           });
           actionRow.appendChild(delBtn);
 
-          diaryCard.appendChild(actionRow);
-        }
+          detailsContainer.appendChild(actionRow);
+          diaryCard.appendChild(detailsContainer);
+
+          headerRow.addEventListener('click', () => {
+            isExpanded = !isExpanded;
+            renderText();
+            if (!isExpanded && record.images && record.images.length > 0) {
+              textBlock.appendChild(indicatorsSpan);
+            }
+            toggleIcon.innerHTML = isExpanded ? '▲' : '▼';
+            detailsContainer.style.display = isExpanded ? 'block' : 'none';
+          });
 
         diaryContent.appendChild(diaryCard);
       });
