@@ -118,15 +118,6 @@ const PRESET_COLORS = [
 ];
 
 // Helper to get category details safely
-
-// Helper to check if drawing data exists
-function hasDrawingData(data) {
-  if (!data) return false;
-  if (Array.isArray(data)) return data.length > 0;
-  if (data && data.type === 'pdf_drawing') return true;
-  return false;
-}
-
 function getCategory(categoryId) {
   if (categoryId === 'none' || !categoryId) {
     return { label: '', color: '#ffffff', isNone: true };
@@ -359,63 +350,6 @@ function init() {
 
   // Initialize Routines Panel
   initRoutinesPanel();
-  
-  initNavSortable();
-
-  function initNavSortable() {
-    const navContainer = document.getElementById('header-buttons-list');
-    if (!navContainer || typeof Sortable === 'undefined') return;
-
-    // Load saved order
-    const savedOrderJson = localStorage.getItem('neon_planner_nav_order');
-    if (savedOrderJson) {
-      try {
-        const savedOrder = JSON.parse(savedOrderJson);
-        if (Array.isArray(savedOrder)) {
-          const children = Array.from(navContainer.children);
-          const orderedChildren = [];
-          const remainingChildren = [...children];
-
-          savedOrder.forEach(id => {
-          const elIndex = remainingChildren.findIndex(el => el.id === id || (id === 'gdrive-group' && el.classList.contains('header-gdrive-group')));
-          if (elIndex !== -1) {
-            orderedChildren.push(remainingChildren[elIndex]);
-            remainingChildren.splice(elIndex, 1);
-          }
-        });
-        
-        // Append any new or remaining elements
-        orderedChildren.push(...remainingChildren);
-        orderedChildren.forEach(el => navContainer.appendChild(el));
-        }
-      } catch(e) {
-        console.error(e);
-      }
-    }
-
-    Sortable.create(navContainer, {
-      animation: 150,
-      delay: 200,
-      delayOnTouchOnly: true,
-      touchStartThreshold: 5,
-      fallbackTolerance: 5,
-      forceFallback: true,
-      fallbackOnBody: true,
-      ghostClass: 'sortable-ghost',
-      onEnd: () => {
-        const newOrder = Array.from(navContainer.children).map(child => {
-          if (child.id) return child.id;
-          if (child.classList.contains('header-gdrive-group')) return 'gdrive-group';
-          return null;
-        }).filter(id => id);
-        
-        localStorage.setItem('neon_planner_nav_order', JSON.stringify(newOrder));
-        if (typeof triggerGDriveAutoSync === 'function') {
-          triggerGDriveAutoSync();
-        }
-      }
-    });
-  }
 
   // Initialize SortableJS for drag-and-drop
   if (typeof Sortable !== 'undefined' && todoItemsList) {
@@ -619,18 +553,6 @@ function loadFromLocalStorage() {
     }
     state.categories = { ...DEFAULT_CATEGORIES, ...customCategories };
     localStorage.setItem('neon_planner_categories', JSON.stringify(state.categories));
-  }
-  
-  const savedCategoryOrder = localStorage.getItem('neon_planner_category_order');
-  if (savedCategoryOrder) {
-    try {
-      const parsed = JSON.parse(savedCategoryOrder);
-      state.categoryOrder = Array.isArray(parsed) ? parsed : [];
-    } catch(e) {
-      state.categoryOrder = [];
-    }
-  } else {
-    state.categoryOrder = [];
   }
 
   const savedDiaries = localStorage.getItem('neon_planner_diaries');
@@ -1234,33 +1156,32 @@ function scheduleGDriveTokenRefresh(expiryTime) {
 
 // Silently refresh the Google Drive access token using promptless GIS client
 function autoRefreshGDriveToken() {
-  return new Promise((resolve) => {
-    let clientId = (state.gdriveClientId || '').trim();
-    if (!clientId) { resolve(null); return; }
-    if (!clientId.endsWith('.apps.googleusercontent.com')) {
-      clientId += '.apps.googleusercontent.com';
-    }
+  let clientId = (state.gdriveClientId || '').trim();
+  if (!clientId) return;
+  if (!clientId.endsWith('.apps.googleusercontent.com')) {
+    clientId += '.apps.googleusercontent.com';
+  }
 
-    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-      console.warn('Google Identity Services script not ready for silent refresh.');
-      resolve(null); return;
-    }
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    console.warn('Google Identity Services script not ready for silent refresh.');
+    return;
+  }
 
-    const gdriveBackupBtn = document.getElementById('btn-gdrive-backup');
-    const gdriveRestoreBtn = document.getElementById('btn-gdrive-restore');
-    const gdriveLogoutBtn = document.getElementById('btn-gdrive-logout');
+  const gdriveBackupBtn = document.getElementById('btn-gdrive-backup');
+  const gdriveRestoreBtn = document.getElementById('btn-gdrive-restore');
+  const gdriveLogoutBtn = document.getElementById('btn-gdrive-logout');
 
-    try {
-      gdriveTokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.appdata',
-        callback: (tokenResponse) => {
-          if (tokenResponse.error !== undefined) {
-            console.error('Silent Google Drive token refresh failed:', tokenResponse.error);
-            resolve(null); return;
-          }
-          gdriveAccessToken = tokenResponse.access_token;
-          const expiryTime = Date.now() + (tokenResponse.expires_in * 1000);
+  try {
+    gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: 'https://www.googleapis.com/auth/drive.appdata',
+      callback: (tokenResponse) => {
+        if (tokenResponse.error !== undefined) {
+          console.error('Silent Google Drive token refresh failed:', tokenResponse.error);
+          return;
+        }
+        gdriveAccessToken = tokenResponse.access_token;
+        const expiryTime = Date.now() + (tokenResponse.expires_in * 1000);
         localStorage.setItem('neon_planner_gdrive_access_token', gdriveAccessToken);
         localStorage.setItem('neon_planner_gdrive_token_expiry', expiryTime);
 
@@ -1281,7 +1202,6 @@ function autoRefreshGDriveToken() {
         scheduleGDriveTokenRefresh(expiryTime);
         if (gdrivePollInterval) clearInterval(gdrivePollInterval);
         gdrivePollInterval = setInterval(autoSyncWithDrive, 3000);
-        resolve(gdriveAccessToken);
       }
     });
 
@@ -1289,9 +1209,7 @@ function autoRefreshGDriveToken() {
     gdriveTokenClient.requestAccessToken({ prompt: '' });
   } catch (e) {
     console.error('Silent token refresh initialization failed:', e);
-    resolve(null);
   }
-  });
 }
 
 // Background Auto-sync to Google Drive (if logged in and connected)
@@ -3307,9 +3225,9 @@ function setupEventListeners() {
     btnSaveNewRecord.addEventListener('click', () => {
       const dateKey = state.selectedDate;
       const textVal = newRecordText.value.trim();
-      const imagesVal = state.diaryDraftImages ? JSON.parse(JSON.stringify(state.diaryDraftImages)) : [];
-      const drawingVal = state.diaryDraftDrawing ? JSON.parse(JSON.stringify(state.diaryDraftDrawing)) : [];
-      const audioVal = state.diaryDraftAudio ? JSON.parse(JSON.stringify(state.diaryDraftAudio)) : [];
+      const imagesVal = [...state.diaryDraftImages];
+      const drawingVal = [...(state.diaryDraftDrawing || [])];
+      const audioVal = [...(state.diaryDraftAudio || [])];
 
       if (!textVal && imagesVal.length === 0 && drawingVal.length === 0 && audioVal.length === 0) {
         alert('내용이나 사진, 그림, 음성 중 하나를 입력해 주세요.');
@@ -3344,23 +3262,18 @@ function setupEventListeners() {
 
       const statusSpan = document.getElementById('new-record-save-status');
       if (statusSpan) {
-        statusSpan.textContent = '파일 처리 중... (대용량은 시간이 걸립니다)';
+        statusSpan.textContent = '사진 압축 중...';
         statusSpan.style.opacity = '1';
       }
 
       let processed = 0;
       files.forEach(file => {
         if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(async id => {
-            let posterDataUrl = null;
-            if (file.type.startsWith('video/')) {
-              posterDataUrl = await captureVideoThumbnail(file);
-            }
+          FileDB.saveFile(file, file.type, file.name).then(id => {
             state.diaryDraftImages.push({
               fileId: id,
               type: file.type.startsWith('video/') ? 'video' : 'pdf',
-              name: file.name,
-              poster: posterDataUrl
+              name: file.name
             });
             processed++;
             if (processed === files.length) {
@@ -3404,17 +3317,6 @@ function setupEventListeners() {
 
   const closeLightbox = () => {
     if (lightboxModal) lightboxModal.classList.add('hidden');
-    // Stop any playing video when closing
-    const mediaContainer = document.getElementById('lightbox-media-container');
-    if (mediaContainer) {
-      const vid = mediaContainer.querySelector('video');
-      if (vid) {
-        vid.pause();
-        vid.src = '';
-      }
-      mediaContainer.innerHTML = '';
-      mediaContainer.style.display = 'none';
-    }
   };
 
   if (btnCloseLightbox) btnCloseLightbox.addEventListener('click', closeLightbox);
@@ -3487,11 +3389,7 @@ function setupEventListeners() {
     btnTodoCancel.addEventListener('click', closeTodoEditModal);
   }
   if (todoEditBackdrop) {
-    todoEditBackdrop.addEventListener('click', () => {
-      const saveBtn = document.getElementById('btn-todo-edit-save');
-      if (saveBtn) saveBtn.click();
-      else closeTodoEditModal();
-    });
+    todoEditBackdrop.addEventListener('click', closeTodoEditModal);
   }
 
   const btnTodoClearTime = document.getElementById('btn-todo-edit-clear-time');
@@ -3575,9 +3473,9 @@ function setupEventListeners() {
 
       const importantInput = document.getElementById('todo-edit-modal-important');
       const isImportantVal = importantInput ? importantInput.checked : Boolean(todo.isImportant);
-      const newImages = todoEditDraftImages ? JSON.parse(JSON.stringify(todoEditDraftImages)) : [];
-      const newDrawing = todoEditDraftDrawing ? JSON.parse(JSON.stringify(todoEditDraftDrawing)) : [];
-      const newAudio = todoEditDraftAudio ? JSON.parse(JSON.stringify(todoEditDraftAudio)) : [];
+      const newImages = [...todoEditDraftImages];
+      const newDrawing = [...todoEditDraftDrawing];
+      const newAudio = [...todoEditDraftAudio];
 
       const todo = state.todos[dateKey].find(t => t.id === editingTodoId);
       if (todo) {
@@ -3657,23 +3555,18 @@ function setupEventListeners() {
       
       const statusSpan = document.getElementById('todo-edit-modal-photo-status');
       if (statusSpan) {
-        statusSpan.textContent = '파일 처리 중... (대용량은 시간이 걸립니다)';
+        statusSpan.textContent = '사진 압축 중...';
         statusSpan.style.opacity = '1';
       }
       
       let processed = 0;
       files.forEach(file => {
         if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(async id => {
-            let posterDataUrl = null;
-            if (file.type.startsWith('video/')) {
-              posterDataUrl = await captureVideoThumbnail(file);
-            }
+          FileDB.saveFile(file, file.type, file.name).then(id => {
             todoEditDraftImages.push({
               fileId: id,
               type: file.type.startsWith('video/') ? 'video' : 'pdf',
-              name: file.name,
-              poster: posterDataUrl
+              name: file.name
             });
             processed++;
             if (processed === files.length) {
@@ -4461,16 +4354,7 @@ function openTodoEditModal(todoId) {
     const newBtn = btnToggleTodoDrawing.cloneNode(true);
     btnToggleTodoDrawing.parentNode.replaceChild(newBtn, btnToggleTodoDrawing);
     
-    const deleteBtn = document.getElementById('btn-delete-todo-modal-drawing');
-    
     // Update thumbnail
-    const openTodoDrawingEditor = () => {
-      openFullscreenDrawing(todoEditDraftDrawing, (data, isClosing) => {
-        todoEditDraftDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
-        if (isClosing) updateThumb();
-      });
-    };
-
     const updateThumb = () => {
       const container = document.getElementById('todo-edit-modal-drawing-container');
       if (!container) return;
@@ -4479,31 +4363,18 @@ function openTodoEditModal(todoId) {
         container.style.display = 'block';
         container.classList.remove('hidden');
         new NeonDrawingBoard(container, { initialData: todoEditDraftDrawing, readOnly: true });
-        if (deleteBtn) deleteBtn.style.display = 'block';
       } else {
         container.style.display = 'none';
-        if (deleteBtn) deleteBtn.style.display = 'none';
       }
     };
     updateThumb();
 
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (confirm('첨부된 그림을 지우시겠습니까?')) {
-          todoEditDraftDrawing = [];
-          updateThumb();
-        }
+    newBtn.addEventListener('click', () => {
+      openFullscreenDrawing(todoEditDraftDrawing, (data) => {
+        todoEditDraftDrawing = data;
+        updateThumb();
       });
-    }
-
-    newBtn.addEventListener('click', openTodoDrawingEditor);
-    const drawContainer = document.getElementById('todo-edit-modal-drawing-container');
-    if (drawContainer) {
-      drawContainer.style.cursor = 'pointer';
-      drawContainer.title = '클릭하여 곧바로 그림 수정하기';
-      drawContainer.addEventListener('click', openTodoDrawingEditor);
-    }
+    });
   }
   // Setup Todo audio dictate button
   const todoDictateBtn = document.getElementById('btn-dictate-todo-modal');
@@ -4511,11 +4382,10 @@ function openTodoEditModal(todoId) {
     // Remove existing event listeners by replacing the node (to prevent duplicates)
     const newBtn = todoDictateBtn.cloneNode(true);
     todoDictateBtn.parentNode.replaceChild(newBtn, todoDictateBtn);
-
     handleAudioDictateClick(
       'btn-dictate-todo-modal', 
       'todo-edit-modal-memo', 
-      () => todoEditDraftAudio, 
+      todoEditDraftAudio, 
       'todo-edit-modal-audio-previews',
       () => renderTodoEditPreviews()
     );
@@ -4534,11 +4404,19 @@ function renderTodoEditPreviews() {
     }
     const thumb = document.createElement('div');
     thumb.className = 'record-draft-thumb';
-    const mediaContainer = createMediaElementAsync(imgSrc, true, () => openLightbox(todoEditDraftImages, idx, true), () => {
+    const imgWrapper = document.createElement('div');
+    imgWrapper.className = 'thumb-img-wrapper';
+    renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(todoEditDraftImages, idx, true));
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'delete-thumb-btn';
+    delBtn.innerHTML = '&times;';
+    delBtn.addEventListener('click', () => {
       todoEditDraftImages.splice(idx, 1);
       renderTodoEditPreviews();
     });
-    thumb.appendChild(mediaContainer);
+    imgWrapper.appendChild(delBtn);
+    thumb.appendChild(imgWrapper);
     previewsContainer.appendChild(thumb);
   });
   
@@ -4925,8 +4803,6 @@ function renderCategoryFilterTabs() {
 
   const activeFilter = state.todoFilterCategory || 'all';
 
-  const tabElements = {};
-
   // 1. "전체" (All) Tab
   const allTab = document.createElement('button');
   allTab.type = 'button';
@@ -4942,7 +4818,7 @@ function renderCategoryFilterTabs() {
   allTab.addEventListener('click', () => {
     handleSelectTodoFilterCategory('all');
   });
-  tabElements['all'] = allTab;
+  container.appendChild(allTab);
 
   // 2. "루틴" (Routine) Tab
   const routineTab = document.createElement('button');
@@ -4975,7 +4851,7 @@ function renderCategoryFilterTabs() {
   routineTab.addEventListener('click', () => {
     handleSelectTodoFilterCategory('routine');
   });
-  tabElements['routine'] = routineTab;
+  container.appendChild(routineTab);
 
   // 3. Individual Category Tabs
   Object.keys(state.categories).forEach(catId => {
@@ -5022,52 +4898,8 @@ function renderCategoryFilterTabs() {
       handleSelectTodoFilterCategory(catId);
     });
 
-    tabElements[catId] = tab;
+    container.appendChild(tab);
   });
-
-  // Ensure state.categoryOrder has all current tabs
-  const currentCats = ['all', 'routine', ...Object.keys(state.categories)];
-  currentCats.forEach(c => {
-    if (!state.categoryOrder.includes(c)) {
-      state.categoryOrder.push(c);
-    }
-  });
-  
-  // Clean up deleted categories from order
-  state.categoryOrder = state.categoryOrder.filter(c => currentCats.includes(c));
-
-  // Append in order
-  state.categoryOrder.forEach(catId => {
-    if (tabElements[catId]) {
-      container.appendChild(tabElements[catId]);
-    }
-  });
-
-  // Initialize SortableJS
-  if (typeof Sortable !== 'undefined') {
-    if (container.sortableInstance) {
-      container.sortableInstance.destroy();
-    }
-    container.sortableInstance = Sortable.create(container, {
-      animation: 150,
-      delay: 200, // 200ms long press to drag
-      delayOnTouchOnly: true, // Only delay on touch devices so desktop can drag instantly
-      touchStartThreshold: 5,
-      fallbackTolerance: 5,
-      forceFallback: true,
-      fallbackOnBody: true,
-      ghostClass: 'sortable-ghost',
-      onEnd: () => {
-        // Update state.categoryOrder based on DOM
-        const newOrder = Array.from(container.children)
-          .map(child => child.dataset.category)
-          .filter(c => c); // Ensure no nulls
-        state.categoryOrder = newOrder;
-        localStorage.setItem('neon_planner_category_order', JSON.stringify(state.categoryOrder));
-        triggerGDriveAutoSync();
-      }
-    });
-  }
 }
 
 // Render Dynamic Category Selection Pills
@@ -5221,9 +5053,7 @@ function renderMediaToContainer(mediaObj, container, onClick) {
       if (onClick) vid.addEventListener('click', onClick);
       FileDB.getFile(mediaObj.fileId).then(f => {
         if (f) {
-           const blobType = f.type || 'video/mp4';
-           const typedBlob = new Blob([f.blob], { type: blobType });
-           vid.src = URL.createObjectURL(typedBlob);
+           vid.src = URL.createObjectURL(f.blob);
            vid.preload = 'metadata';
         }
       });
@@ -5407,25 +5237,9 @@ function renderDiary() {
           const files = Array.from(e.target.files);
           if (files.length === 0) return;
           
-          const statusSpan = e.target.parentElement.nextElementSibling;
-          if (statusSpan) {
-            statusSpan.textContent = '파일 처리 중... (대용량은 시간이 걸립니다)';
-            statusSpan.style.opacity = '1';
-          }
           let processed = 0;
           files.forEach(file => {
-            if (file.type.startsWith('video/') || file.type === 'application/pdf') {
-          FileDB.saveFile(file, file.type, file.name).then(async id => {
-            let posterDataUrl = null;
-            if (file.type.startsWith('video/')) {
-              posterDataUrl = await captureVideoThumbnail(file);
-            }
-            state.diaryDraftImages.push({ fileId: id, type: file.type.startsWith('video/') ? 'video' : 'pdf', name: file.name, poster: posterDataUrl });
-            processed++;
-            if (processed === files.length) { renderDiary(); if (statusSpan) statusSpan.textContent = '파일 추가 완료'; }
-          }).catch(err => console.error(err));
-        } else {
-          compressAndSaveImage(file, (dataUrl) => {
+            compressAndSaveImage(file, (dataUrl) => {
               state.diaryDraftImages.push({
                 src: dataUrl,
                 rotate: 0,
@@ -5437,11 +5251,10 @@ function renderDiary() {
                 renderDiary();
               }
             });
-          }
+          });
         });
-      });
 
-      label.appendChild(fileInput);
+        label.appendChild(fileInput);
         label.appendChild(document.createTextNode('📷 사진 선택 (여러장 가능)'));
         mediaRow.appendChild(label);
 
@@ -5464,87 +5277,65 @@ function renderDiary() {
           const thumb = document.createElement('div');
           thumb.className = 'record-draft-thumb';
           
-          const mediaContainer = createMediaElementAsync(imgSrc, true, () => openLightbox(state.diaryDraftImages, idx, true), () => {
+          const imgWrapper = document.createElement('div');
+          imgWrapper.className = 'thumb-img-wrapper';
+
+          renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(state.diaryDraftImages, idx, true));
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'delete-thumb-btn';
+          delBtn.innerHTML = '&times;';
+          delBtn.addEventListener('click', () => {
             state.diaryDraftImages.splice(idx, 1);
             renderDiary();
           });
-          thumb.appendChild(mediaContainer);
+          imgWrapper.appendChild(delBtn);
+          thumb.appendChild(imgWrapper);
 
           previewsContainer.appendChild(thumb);
         });
         card.appendChild(previewsContainer);
 
         // Drawing Board for Edit Mode
-        const drawingHeader = document.createElement('div');
-        drawingHeader.style.display = 'flex';
-        drawingHeader.style.justifyContent = 'space-between';
-        drawingHeader.style.alignItems = 'center';
-
         const drawingLabel = document.createElement('button');
         drawingLabel.type = 'button';
         drawingLabel.className = 'diary-photo-upload-label';
         drawingLabel.style.marginTop = '10px';
+        drawingLabel.style.display = 'block';
+        drawingLabel.style.width = '100%';
         drawingLabel.style.textAlign = 'left';
         drawingLabel.style.background = 'transparent';
         drawingLabel.style.border = 'none';
         drawingLabel.style.cursor = 'pointer';
         drawingLabel.innerHTML = '<span class="upload-icon">🎨</span> 손그림 그리기 (열기/닫기)';
-        
-        const deleteDrawingBtn = document.createElement('button');
-        deleteDrawingBtn.type = 'button';
-        deleteDrawingBtn.innerHTML = '🗑️ 삭제';
-        deleteDrawingBtn.style.cssText = 'display:none; margin-top:10px; padding:6px 12px; background:rgba(239, 68, 68, 0.1); color:#ef4444; border:1px solid #ef4444; border-radius:6px; cursor:pointer; font-size:0.8rem;';
-        
-        drawingHeader.appendChild(drawingLabel);
-        drawingHeader.appendChild(deleteDrawingBtn);
-        card.appendChild(drawingHeader);
+        card.appendChild(drawingLabel);
 
         const drawingContainer = document.createElement('div');
         drawingContainer.className = 'diary-drawing-container hidden';
         drawingContainer.style.display = 'none';
         card.appendChild(drawingContainer);
 
-        const openDiaryDrawingEditor = () => {
-          openFullscreenDrawing(state.diaryDraftDrawing || [], (data, isClosing) => {
-            state.diaryDraftDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
-            if (isClosing) {
-              // Update thumbnail
-              drawingContainer.innerHTML = '';
-              if (state.diaryDraftDrawing && state.diaryDraftDrawing.length > 0) {
-                drawingContainer.style.display = 'block';
-                drawingContainer.classList.remove('hidden');
-                new NeonDrawingBoard(drawingContainer, { initialData: state.diaryDraftDrawing, readOnly: true });
-                deleteDrawingBtn.style.display = 'block';
-              } else {
-                drawingContainer.style.display = 'none';
-                deleteDrawingBtn.style.display = 'none';
-              }
+        drawingLabel.addEventListener('click', () => {
+          openFullscreenDrawing(state.diaryDraftDrawing || [], (data) => {
+            state.diaryDraftDrawing = data;
+            // Update thumbnail
+            drawingContainer.innerHTML = '';
+            if (data && data.length > 0) {
+              drawingContainer.style.display = 'block';
+              drawingContainer.classList.remove('hidden');
+              new NeonDrawingBoard(drawingContainer, { initialData: data, readOnly: true });
+            } else {
+              drawingContainer.style.display = 'none';
             }
           });
-        };
-
-        drawingLabel.addEventListener('click', openDiaryDrawingEditor);
-        
-        deleteDrawingBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (confirm('첨부된 그림을 지우시겠습니까?')) {
-            state.diaryDraftDrawing = [];
-            drawingContainer.innerHTML = '';
-            drawingContainer.style.display = 'none';
-            deleteDrawingBtn.style.display = 'none';
-          }
         });
-        
-        drawingContainer.style.cursor = 'pointer';
-        drawingContainer.title = '클릭하여 곧바로 그림 수정하기';
-        drawingContainer.addEventListener('click', openDiaryDrawingEditor);
         
         // Initial thumbnail render
         if (hasDrawingData(state.diaryDraftDrawing)) {
           drawingContainer.style.display = 'block';
           drawingContainer.classList.remove('hidden');
           new NeonDrawingBoard(drawingContainer, { initialData: state.diaryDraftDrawing, readOnly: true });
-          deleteDrawingBtn.style.display = 'block';
         }
 
         // Actions row
@@ -5557,9 +5348,9 @@ function renderDiary() {
         saveBtn.innerHTML = '💾 저장완료';
         saveBtn.addEventListener('click', () => {
           record.text = textarea.value;
-          record.images = state.diaryDraftImages ? JSON.parse(JSON.stringify(state.diaryDraftImages)) : [];
-          record.drawing = state.diaryDraftDrawing ? JSON.parse(JSON.stringify(state.diaryDraftDrawing)) : [];
-          record.audio = state.diaryDraftAudio ? JSON.parse(JSON.stringify(state.diaryDraftAudio)) : [];
+          record.images = [...state.diaryDraftImages];
+          record.drawing = [...(state.diaryDraftDrawing || [])];
+          record.audio = [...(state.diaryDraftAudio || [])];
           saveDiaries();
           state.editingRecordId = null;
           state.diaryDraftImages = [];
@@ -5634,14 +5425,10 @@ function renderDiary() {
           const openDirectEdit = (e) => {
             e.stopPropagation();
             e.preventDefault();
-            openFullscreenDrawing(record.drawing, (data, isClosing) => {
-              const currentDayDiaries = state.diaries[dateKey] || [];
-              const currentRecord = currentDayDiaries.find(r => r.id === record.id);
-              if (currentRecord) {
-                currentRecord.drawing = data ? JSON.parse(JSON.stringify(data)) : [];
-                saveDiaries();
-                if (isClosing) renderDiary();
-              }
+            openFullscreenDrawing(record.drawing, (data) => {
+              record.drawing = data;
+              saveDiaries();
+              renderDiary();
             });
           };
           viewDrawingContainer.addEventListener('click', openDirectEdit);
@@ -5779,11 +5566,21 @@ function renderDiary() {
         const thumb = document.createElement('div');
         thumb.className = 'record-draft-thumb';
         
-        const mediaContainer = createMediaElementAsync(imgSrc, true, () => openLightbox(state.diaryDraftImages, idx, true), () => {
+        const imgWrapper = document.createElement('div');
+        imgWrapper.className = 'thumb-img-wrapper';
+
+        renderMediaToContainer(imgSrc, imgWrapper, () => openLightbox(state.diaryDraftImages, idx, true));
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'delete-thumb-btn';
+        delBtn.innerHTML = '&times;';
+        delBtn.addEventListener('click', () => {
           state.diaryDraftImages.splice(idx, 1);
           renderDiary();
         });
-        thumb.appendChild(mediaContainer);
+        imgWrapper.appendChild(delBtn);
+        thumb.appendChild(imgWrapper);
 
         creatorPreviews.appendChild(thumb);
       });
@@ -5808,20 +5605,12 @@ function renderDiary() {
     if (btnToggleNewRecordDrawing) {
       const newBtn = btnToggleNewRecordDrawing.cloneNode(true);
       btnToggleNewRecordDrawing.parentNode.replaceChild(newBtn, btnToggleNewRecordDrawing);
-      
-      const openNewRecordDrawingEditor = () => {
-        openFullscreenDrawing(state.diaryDraftDrawing || [], (data, isClosing) => {
-          state.diaryDraftDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
-          if (isClosing) updateNewRecordThumb();
+      newBtn.addEventListener('click', () => {
+        openFullscreenDrawing(state.diaryDraftDrawing || [], (data) => {
+          state.diaryDraftDrawing = data;
+          updateNewRecordThumb();
         });
-      };
-      newBtn.addEventListener('click', openNewRecordDrawingEditor);
-      const drawContainer = document.getElementById('new-record-drawing-container');
-      if (drawContainer) {
-        drawContainer.style.cursor = 'pointer';
-        drawContainer.title = '클릭하여 곧바로 그림 수정하기';
-        drawContainer.addEventListener('click', openNewRecordDrawingEditor);
-      }
+      });
     }
   } else {
     newRecordCreator.classList.add('hidden');
@@ -6122,91 +5911,49 @@ function renderTimeline() {
 
           diaryCard.appendChild(btnRow);
         } else {
-          let isExpanded = false;
-
-          const headerRow = document.createElement('div');
-          headerRow.style.display = 'flex';
-          headerRow.style.justifyContent = 'space-between';
-          headerRow.style.alignItems = 'flex-start';
-          headerRow.style.cursor = 'pointer';
-
+          // Emotion + Text View
           const textBlock = document.createElement('div');
           textBlock.className = 'timeline-diary-text';
-          textBlock.style.flex = '1';
-          textBlock.style.margin = '0';
           
-          const toggleIcon = document.createElement('span');
-          toggleIcon.style.marginLeft = '8px';
-          toggleIcon.style.fontSize = '0.8rem';
-          toggleIcon.style.color = 'var(--text-muted)';
-          toggleIcon.style.paddingTop = '4px';
-          toggleIcon.innerHTML = '▼';
-
-          const renderText = () => {
-            textBlock.innerHTML = '';
-            if (record.emotion) {
-              const emotionSpan = document.createElement('span');
-              emotionSpan.style = 'margin-right: 6px; font-size: 1.1rem;';
-              emotionSpan.textContent = record.emotion;
-              textBlock.appendChild(emotionSpan);
-            }
-            const spanContent = document.createElement('span');
-            spanContent.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
-            textBlock.appendChild(spanContent);
-
-            if (!isExpanded) {
-              textBlock.style.display = '-webkit-box';
-              textBlock.style.webkitLineClamp = '2';
-              textBlock.style.webkitBoxOrient = 'vertical';
-              textBlock.style.overflow = 'hidden';
-            } else {
-              textBlock.style.display = 'block';
-              textBlock.style.webkitLineClamp = 'unset';
-              textBlock.style.overflow = 'visible';
-            }
-          };
-          renderText();
-
-          // Indicators for hidden attachments
-          const indicatorsSpan = document.createElement('span');
-          indicatorsSpan.style.fontSize = '0.85em';
-          indicatorsSpan.style.marginLeft = '6px';
-          indicatorsSpan.style.opacity = '0.8';
-          if (record.images && record.images.length > 0) {
-            indicatorsSpan.innerHTML = '🖼️';
-            textBlock.appendChild(indicatorsSpan);
+          if (record.emotion) {
+            const emotionSpan = document.createElement('span');
+            emotionSpan.style = 'margin-right: 6px; font-size: 1.1rem;';
+            emotionSpan.textContent = record.emotion;
+            textBlock.appendChild(emotionSpan);
           }
 
-          headerRow.appendChild(textBlock);
-          headerRow.appendChild(toggleIcon);
-          diaryCard.appendChild(headerRow);
-
-          // Details Container
-          const detailsContainer = document.createElement('div');
-          detailsContainer.style.display = 'none';
+          const spanContent = document.createElement('span');
+          spanContent.innerHTML = highlightMarkup(linkify(record.text || ''), state.searchQuery);
+          textBlock.appendChild(spanContent);
           
+          diaryCard.appendChild(textBlock);
+
           // Photos
           if (record.images && record.images.length > 0) {
             const imgDiv = document.createElement('div');
             imgDiv.className = 'timeline-diary-images';
-            imgDiv.style.marginTop = '8px';
             record.images.forEach((imgSrc, idx) => {
-              const mediaContainer = createMediaElementAsync(imgSrc, false, () => openLightbox(record.images, idx));
-              imgDiv.appendChild(mediaContainer);
+              const img = document.createElement('img');
+              img.className = 'timeline-diary-img';
+              img.src = typeof imgSrc === 'string' ? imgSrc : imgSrc.src;
+              img.style = getImageStyle(imgSrc);
+              img.addEventListener('click', () => {
+                openLightbox(record.images, idx);
+              });
+              imgDiv.appendChild(img);
             });
-            detailsContainer.appendChild(imgDiv);
+            diaryCard.appendChild(imgDiv);
           }
 
           // Inline Actions: Edit / Delete
           const actionRow = document.createElement('div');
-          actionRow.style = 'display: flex; gap: 8px; margin-top: 8px;';
+          actionRow.style = 'display: flex; gap: 8px; margin-top: 6px;';
 
           const editBtn = document.createElement('button');
           editBtn.type = 'button';
           editBtn.className = 'timeline-action-btn-safe';
           editBtn.innerHTML = '✏️ 수정';
-          editBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
+          editBtn.addEventListener('click', () => {
             state.editingTimelineRecordId = record.id;
             renderTimeline();
           });
@@ -6216,8 +5963,7 @@ function renderTimeline() {
           delBtn.type = 'button';
           delBtn.className = 'timeline-action-btn-danger';
           delBtn.innerHTML = '❌ 삭제';
-          delBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
+          delBtn.addEventListener('click', () => {
             if (confirm('이 기록을 삭제하시겠습니까?')) {
               pushToHistory();
               state.diaries[dateKey] = state.diaries[dateKey].filter(r => r.id !== record.id);
@@ -6231,18 +5977,7 @@ function renderTimeline() {
           });
           actionRow.appendChild(delBtn);
 
-          detailsContainer.appendChild(actionRow);
-          diaryCard.appendChild(detailsContainer);
-
-          headerRow.addEventListener('click', () => {
-            isExpanded = !isExpanded;
-            renderText();
-            if (!isExpanded && record.images && record.images.length > 0) {
-              textBlock.appendChild(indicatorsSpan);
-            }
-            toggleIcon.innerHTML = isExpanded ? '▲' : '▼';
-            detailsContainer.style.display = isExpanded ? 'block' : 'none';
-          });
+          diaryCard.appendChild(actionRow);
         }
 
         diaryContent.appendChild(diaryCard);
@@ -6258,48 +5993,6 @@ function renderTimeline() {
 }
 
 // Read image file, resize, compress to JPEG format and return as Base64 Data URL
-function captureVideoThumbnail(file) {
-  return new Promise((resolve) => {
-    const blobUrl = URL.createObjectURL(file);
-    const video = document.createElement('video');
-    video.src = blobUrl;
-    video.muted = true;
-    video.playsInline = true;
-    video.style.display = 'none';
-    
-    const timeout = setTimeout(() => {
-      resolve(null);
-    }, 5000);
-    
-    video.addEventListener('loadeddata', () => {
-      video.currentTime = Math.min(0.5, video.duration || 0);
-    });
-    
-    video.addEventListener('seeked', () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 120;
-        canvas.height = video.videoHeight || 80;
-        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-        const posterUrl = canvas.toDataURL('image/jpeg', 0.5);
-        clearTimeout(timeout);
-        resolve(posterUrl);
-      } catch(e) {
-        clearTimeout(timeout);
-        resolve(null);
-      }
-    });
-    
-    video.addEventListener('error', () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
-    
-    document.body.appendChild(video);
-    setTimeout(() => { try { document.body.removeChild(video); } catch(e){} }, 5500);
-  });
-}
-
 function compressAndSaveImage(file, callback) {
   const reader = new FileReader();
   reader.onload = function(event) {
@@ -6391,9 +6084,6 @@ function showLightboxImage(idx) {
   lightboxImg.classList.add('lightbox-image-transition');
 
   
-  let isVideo = false;
-  let isPdf = false;
-  
   if (currentImg && currentImg.fileId) {
     lightboxImg.style.display = 'none';
     let mediaContainer = document.getElementById('lightbox-media-container');
@@ -6401,69 +6091,30 @@ function showLightboxImage(idx) {
       mediaContainer = document.createElement('div');
       mediaContainer.id = 'lightbox-media-container';
       mediaContainer.style.width = '100%';
+      mediaContainer.style.height = '100%';
       mediaContainer.style.display = 'flex';
       mediaContainer.style.alignItems = 'center';
       mediaContainer.style.justifyContent = 'center';
-      mediaContainer.style.flexDirection = 'column';
       lightboxImg.parentNode.insertBefore(mediaContainer, lightboxImg);
     }
     mediaContainer.innerHTML = '';
     mediaContainer.style.display = 'flex';
     if (currentImg.type === 'video') {
-      isVideo = true;
-      const vidWrapper = document.createElement('div');
-      vidWrapper.style.position = 'relative';
-      vidWrapper.style.width = '100%';
-      vidWrapper.style.height = '100%';
-      vidWrapper.style.display = 'flex';
-      vidWrapper.style.flexDirection = 'column';
-      vidWrapper.style.alignItems = 'center';
-      vidWrapper.style.justifyContent = 'center';
-
       const vid = document.createElement('video');
       vid.style.maxWidth = '100%';
-      vid.style.maxHeight = '90%';
+      vid.style.maxHeight = '100%';
       vid.controls = true;
       vid.autoplay = true;
-      vid.playsInline = true;
-      
-      const hint = document.createElement('div');
-      hint.style.color = '#fff';
-      hint.style.fontSize = '0.85rem';
-      hint.style.marginTop = '10px';
-      hint.style.opacity = '0.7';
-      hint.innerHTML = '⚠️ 검은 화면만 나올 경우, 브라우저가 지원하지 않는 형식입니다.<br>하단의 <b>[원본 영상 다운로드]</b>를 눌러 PC에서 재생하세요.';
-      hint.style.textAlign = 'center';
-
       FileDB.getFile(currentImg.fileId).then(f => {
-        if (f) {
-          const blobType = f.type || 'video/mp4';
-          const typedBlob = new Blob([f.blob], { type: blobType });
-          const blobUrl = URL.createObjectURL(typedBlob);
-          vid.src = blobUrl;
-          if (downloadLink) {
-            downloadLink.href = blobUrl;
-            downloadLink.download = currentImg.name || `video-${state.selectedDate || 'date'}.mp4`;
-          }
-        }
+        if (f) vid.src = URL.createObjectURL(f.blob);
       });
-      vidWrapper.appendChild(vid);
-      vidWrapper.appendChild(hint);
-      mediaContainer.appendChild(vidWrapper);
+      mediaContainer.appendChild(vid);
     } else if (currentImg.type === 'pdf') {
-       isPdf = true;
        const iframe = document.createElement('iframe');
        iframe.style.width = '100%';
        iframe.style.height = '100%';
        FileDB.getFile(currentImg.fileId).then(f => {
-         if (f) {
-           const blobUrl = URL.createObjectURL(f.blob);
-           iframe.src = blobUrl;
-           if (downloadLink) {
-             downloadLink.href = blobUrl;
-             downloadLink.download = currentImg.name || `document-${state.selectedDate || 'date'}.pdf`;
-           }
-         }
+         if (f) iframe.src = URL.createObjectURL(f.blob);
        });
        mediaContainer.appendChild(iframe);
     }
@@ -6475,16 +6126,10 @@ function showLightboxImage(idx) {
     lightboxImg.style = getImageStyle(currentImg);
   }
 
+
   if (downloadLink) {
-    if (isVideo) {
-      downloadLink.innerHTML = '📥 원본 영상 다운로드';
-    } else if (isPdf) {
-      downloadLink.innerHTML = '📥 문서 다운로드';
-    } else {
-      downloadLink.href = src;
-      downloadLink.download = `record-photo-${state.selectedDate || 'date'}-${lightboxIndex + 1}.jpg`;
-      downloadLink.innerHTML = '📥 사진 다운로드';
-    }
+    downloadLink.href = src;
+    downloadLink.download = `record-photo-${state.selectedDate || 'date'}-${lightboxIndex + 1}.jpg`;
   }
 
   if (counterEl) {
@@ -7705,1782 +7350,3 @@ function formatTimeKorean(timeStr) {
 }
 
 // Render Todo Items for the selected date
-function renderTodos() {
-  
-  const dateObj = new Date(state.selectedDate);
-  const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
-  const formattedText = `${dateObj.getMonth() + 1}월 ${dateObj.getDate()}일 (${weekdays[dateObj.getDay()]})`;
-  
-  const todayStr = formatDateString(new Date());
-  if (state.selectedDate === todayStr) {
-    selectedDateDisplay.textContent = `${formattedText} - 오늘`;
-  } else {
-    selectedDateDisplay.textContent = formattedText;
-  }
-
-  if (todoInputField) {
-    todoInputField.placeholder = `${dateObj.getMonth() + 1}월 ${dateObj.getDate()}일의 새로운 할 일을 입력해 보세요...`;
-  }
-
-  const inputContainer = document.querySelector('.todo-input-container');
-  const filterContainer = document.getElementById('todo-cat-filter-container');
-  const toggleBtn = document.getElementById('btn-toggle-todos');
-  if (toggleBtn) {
-    if (state.showTodos) {
-      toggleBtn.classList.add('active-view');
-      if (inputContainer) inputContainer.classList.remove('hidden');
-      if (filterContainer) filterContainer.classList.remove('hidden');
-      if (todoItemsList) todoItemsList.classList.remove('hidden');
-    } else {
-      toggleBtn.classList.remove('active-view');
-      if (inputContainer) inputContainer.classList.add('hidden');
-      if (filterContainer) filterContainer.classList.add('hidden');
-      if (todoItemsList) todoItemsList.classList.add('hidden');
-    }
-  }
-
-  todoItemsList.innerHTML = '';
-
-  let dayTodos = [];
-  const query = state.searchQuery.trim().toLowerCase();
-  
-  if (query !== '') {
-    Object.keys(state.todos).forEach(dateKey => {
-      state.todos[dateKey].forEach(todo => {
-        const cat = getCategory(todo.category);
-        const catLabel = cat && cat.label ? String(cat.label).toLowerCase() : '';
-        if (todo.text.toLowerCase().includes(query) || catLabel.includes(query)) {
-          dayTodos.push({ ...todo, dateKey });
-        }
-      });
-    });
-  } else {
-    const currentDayTodos = state.todos[state.selectedDate] || [];
-    dayTodos = currentDayTodos.map(todo => ({ ...todo, dateKey: state.selectedDate }));
-  }
-
-  // Filter by category tab or routine if not 'all'
-  const filterCat = state.todoFilterCategory || 'all';
-  let filteredTodos = dayTodos;
-  if (filterCat === 'routine') {
-    filteredTodos = dayTodos.filter(todo => Boolean(todo.isRoutine));
-  } else if (filterCat !== 'all') {
-    const filterCatObj = state.categories[filterCat];
-    filteredTodos = dayTodos.filter(todo => {
-      let cat = todo.category || 'other';
-      if (!state.categories[cat]) {
-        const matchKey = Object.keys(state.categories).find(k => state.categories[k].label === cat);
-        if (matchKey) cat = matchKey;
-      }
-      return String(cat).toLowerCase() === String(filterCat).toLowerCase();
-    });
-  }
-
-  if (dayTodos.length === 0) {
-    const emptyDiv = document.createElement('div');
-    emptyDiv.classList.add('empty-state');
-    emptyDiv.textContent = query !== '' ? '검색 결과가 없습니다.' : '할 일이 없습니다. 새로운 할 일을 추가해 보세요!';
-    todoItemsList.appendChild(emptyDiv);
-    return;
-  }
-
-  if (filteredTodos.length === 0) {
-    if (filterCat === 'routine') {
-      const emptyDiv = document.createElement('div');
-      emptyDiv.className = 'todo-filter-empty-state';
-      emptyDiv.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 1.1rem;">🔄</span>
-          <span>선택한 날짜에 등록된 <strong>루틴</strong> 할 일이 없습니다.</span>
-        </div>
-        <div class="empty-actions">
-          <button type="button" class="empty-btn primary" id="btn-quick-add-routine">
-            ➕ 새 루틴 할 일 추가하기
-          </button>
-          <button type="button" class="empty-btn" id="btn-show-all-todos-filter">
-            📋 전체 할 일 보기
-          </button>
-        </div>
-      `;
-      todoItemsList.appendChild(emptyDiv);
-
-      const btnQuickAdd = emptyDiv.querySelector('#btn-quick-add-routine');
-      if (btnQuickAdd) {
-        btnQuickAdd.addEventListener('click', () => {
-          const routineCheckbox = document.getElementById('routine-checkbox');
-          if (routineCheckbox) {
-            routineCheckbox.checked = true;
-          }
-          if (todoInputField) {
-            todoInputField.focus();
-            const todoInputContainer = document.querySelector('.todo-input-container');
-            if (todoInputContainer) todoInputContainer.classList.add('expanded');
-          }
-        });
-      }
-      const btnShowAll = emptyDiv.querySelector('#btn-show-all-todos-filter');
-      if (btnShowAll) {
-        btnShowAll.addEventListener('click', () => {
-          state.todoFilterCategory = 'all';
-          updateUI();
-        });
-      }
-      return;
-    }
-
-    const activeCatObj = state.categories[filterCat];
-    const activeCatLabel = activeCatObj ? activeCatObj.label : '선택한 카테고리';
-    const emptyDiv = document.createElement('div');
-    emptyDiv.className = 'todo-filter-empty-state';
-    emptyDiv.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <span style="font-size: 1.1rem;">🎯</span>
-        <span><strong>'${escapeHtml(activeCatLabel)}'</strong> 탭에 등록된 할 일이 없습니다.</span>
-      </div>
-      <div class="empty-actions">
-        <button type="button" class="empty-btn primary" id="btn-quick-add-to-cat">
-          ➕ '${escapeHtml(activeCatLabel)}' 할 일 추가하기
-        </button>
-        <button type="button" class="empty-btn" id="btn-show-all-todos-filter">
-          📋 전체 할 일 보기
-        </button>
-      </div>
-    `;
-    todoItemsList.appendChild(emptyDiv);
-
-    const btnQuickAdd = emptyDiv.querySelector('#btn-quick-add-to-cat');
-    if (btnQuickAdd) {
-      btnQuickAdd.addEventListener('click', () => {
-        state.selectedCategory = filterCat;
-        if (todoInputField) {
-          todoInputField.focus();
-          const todoInputContainer = document.querySelector('.todo-input-container');
-          if (todoInputContainer) todoInputContainer.classList.add('expanded');
-        }
-      });
-    }
-    const btnShowAll = emptyDiv.querySelector('#btn-show-all-todos-filter');
-    if (btnShowAll) {
-      btnShowAll.addEventListener('click', () => {
-        state.todoFilterCategory = 'all';
-        updateUI();
-      });
-    }
-    return;
-  }
-
-  // Sort: Uncompleted first, completed last. Important (isImportant: true) items at the very top.
-  // Then timed items first (chronologically), untimed last.
-  const sortedTodos = [...filteredTodos].sort((a, b) => {
-    if (a.completed !== b.completed) {
-      return a.completed ? 1 : -1;
-    }
-
-    const isImpA = Boolean(a.isImportant);
-    const isImpB = Boolean(b.isImportant);
-    if (isImpA !== isImpB) {
-      return isImpA ? -1 : 1;
-    }
-    
-    // Auto-sorting by time has been removed so customOrder fully dictates the order
-    return (a.customOrder || a.id) - (b.customOrder || b.id);
-  });
-
-  sortedTodos.forEach(todo => {
-    const item = document.createElement('div');
-    item.classList.add('todo-item');
-    item.setAttribute('data-todo-id', todo.id);
-    if (todo.completed) {
-      item.classList.add('completed');
-    }
-    if (todo.isImportant) {
-      item.classList.add('is-important');
-    }
-
-    const itemLeft = document.createElement('div');
-    itemLeft.classList.add('todo-item-left');
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.classList.add('todo-checkbox');
-    checkbox.checked = todo.completed;
-    checkbox.addEventListener('change', () => toggleTodo(todo.id));
-
-    const textSpan = document.createElement('span');
-    textSpan.classList.add('todo-text');
-    let titleHtml = highlightMarkup(linkify(todo.text), state.searchQuery);
-    
-    // Add indicators if attachments exist
-    let indicators = '';
-    if (todo.memo && todo.memo.trim() !== '') indicators += '📝';
-    if ((todo.memoImages && todo.memoImages.length > 0) || (todo.memoVideos && todo.memoVideos.length > 0)) indicators += '🖼️';
-    if (hasDrawingData(todo.memoDrawing)) indicators += '🎨';
-    if (todo.memoAudio && todo.memoAudio.length > 0) indicators += '🎙️';
-    
-    if (indicators) {
-      titleHtml += ` <span class="todo-attachment-indicators" style="font-size: 0.85em; margin-left: 6px; opacity: 0.8;" title="첨부됨">${indicators}</span>`;
-    }
-    
-    textSpan.innerHTML = titleHtml;
-    // Double-click or click on text to edit
-    // Single-click to toggle dates viewer
-    textSpan.addEventListener('click', (e) => {
-      if (item.querySelector('.todo-edit-container')) return; // ignore when editing
-      e.stopPropagation();
-      if (state.selectedTodoIdForDates === todo.id) {
-        state.selectedTodoIdForDates = null;
-      } else {
-        state.selectedTodoIdForDates = todo.id;
-      }
-      updateUI();
-    });
-
-    textSpan.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      openTodoEditModal(todo.id);
-    });
-    textSpan.title = '클릭: 일정 공유/추가 | 더블클릭: 수정 | 꾹 누르기: 순서 이동';
-    textSpan.style.cursor = 'grab';
-
-    const metaDiv = document.createElement('div');
-    metaDiv.classList.add('todo-item-meta');
-
-    // Important badge
-    if (todo.isImportant) {
-      const importantBadge = document.createElement('span');
-      importantBadge.classList.add('important-badge');
-      importantBadge.innerHTML = '⭐ 중요';
-      metaDiv.appendChild(importantBadge);
-    }
-
-    // Routine tag
-    if (todo.isRoutine) {
-      const routineBadge = document.createElement('span');
-      routineBadge.classList.add('routine-badge');
-      routineBadge.textContent = '루틴';
-      routineBadge.style.cursor = 'pointer';
-      routineBadge.title = '클릭 시 루틴 목록만 보기';
-      routineBadge.addEventListener('click', (e) => {
-        e.stopPropagation();
-        handleSelectTodoFilterCategory('routine');
-      });
-      metaDiv.appendChild(routineBadge);
-    }
-
-    // Category Badge
-    const badge = document.createElement('span');
-    badge.classList.add('todo-badge');
-    const cat = getCategory(todo.category);
-    if (cat.class) {
-      badge.classList.add(cat.class);
-    } else {
-      badge.style.color = cat.color;
-      badge.style.backgroundColor = hexToRgba(cat.color, 0.1);
-      badge.style.border = `1px solid ${hexToRgba(cat.color, 0.25)}`;
-    }
-    badge.textContent = cat.label;
-    badge.style.cursor = 'pointer';
-    badge.title = `클릭 시 '${cat.label}' 카테고리만 보기`;
-    badge.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const catKey = Object.keys(state.categories).find(k => k === todo.category || state.categories[k].label === todo.category) || todo.category;
-      handleSelectTodoFilterCategory(catKey);
-    });
-    metaDiv.appendChild(badge);
-
-    // Time Badge
-    if (todo.time) {
-      const timeBadge = document.createElement('span');
-      timeBadge.classList.add('todo-time-badge');
-      timeBadge.innerHTML = `⏰ ${formatTimeKorean(todo.time)}`;
-      metaDiv.appendChild(timeBadge);
-    }
-
-
-
-    itemLeft.appendChild(checkbox);
-    if (state.searchQuery.trim() !== '') {
-      const datePill = document.createElement('span');
-      datePill.classList.add('search-date-pill');
-      datePill.textContent = formatDateKeyToMonthDay(todo.dateKey);
-      datePill.title = `${todo.dateKey}로 이동`;
-      datePill.addEventListener('click', (e) => {
-        e.stopPropagation();
-        state.selectedDate = todo.dateKey;
-        state.searchQuery = '';
-        const searchInput = document.getElementById('global-search-input');
-        if (searchInput) searchInput.value = '';
-        const clearBtn = document.getElementById('btn-clear-search');
-        if (clearBtn) clearBtn.style.display = 'none';
-        applyPreferences();
-        updateUI();
-      });
-      itemLeft.appendChild(datePill);
-    }
-    itemLeft.insertBefore(checkbox, itemLeft.firstChild);
-    itemLeft.appendChild(textSpan);
-    itemLeft.appendChild(metaDiv);
-    
-    const hasAttachments = (todo.memo && todo.memo.trim() !== '') || 
-                           (todo.memoImages && todo.memoImages.length > 0) || 
-                           (todo.memoVideos && todo.memoVideos.length > 0) || 
-                           hasDrawingData(todo.memoDrawing) || 
-                           (todo.memoAudio && todo.memoAudio.length > 0);
-
-    const attachmentsContainer = document.createElement('div');
-    attachmentsContainer.className = 'todo-attachments-container';
-    attachmentsContainer.style.display = 'none'; // Hidden by default
-    attachmentsContainer.style.marginTop = '8px';
-    attachmentsContainer.style.padding = '8px';
-    attachmentsContainer.style.backgroundColor = 'var(--panel-bg, rgba(255,255,255,0.03))';
-    attachmentsContainer.style.borderRadius = '6px';
-    attachmentsContainer.style.border = '1px solid var(--panel-border)';
-
-    let onExpandCallbacks = [];
-
-    if (hasAttachments) {
-      const toggleBtn = document.createElement('div');
-      toggleBtn.className = 'todo-attachments-toggle';
-      toggleBtn.innerHTML = '▼ 펼치기';
-      toggleBtn.style.cssText = 'cursor:pointer; color:var(--text-muted); font-size:0.8rem; margin-top:4px; user-select:none; display:inline-block;';
-      toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const isHidden = attachmentsContainer.style.display === 'none';
-        attachmentsContainer.style.display = isHidden ? 'block' : 'none';
-        toggleBtn.innerHTML = isHidden ? '▲ 접기' : '▼ 펼치기';
-        
-        if (isHidden) {
-          onExpandCallbacks.forEach(cb => cb());
-          // Clear callbacks after first execution so they don't run repeatedly
-          onExpandCallbacks = [];
-        }
-      });
-      itemLeft.appendChild(toggleBtn);
-    }
-
-    // Memo rendering
-    if (todo.memo && todo.memo.trim() !== '') {
-      const memoDiv = document.createElement('div');
-      memoDiv.className = 'todo-memo-text';
-      memoDiv.innerHTML = linkify(todo.memo).replace(/\n/g, '<br>');
-      memoDiv.title = '클릭하여 메모 수정하기';
-      memoDiv.style.cursor = 'pointer';
-      memoDiv.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openTodoEditModal(todo.id);
-        setTimeout(() => {
-          const memoInput = document.getElementById('todo-edit-modal-memo');
-          if (memoInput) memoInput.focus();
-        }, 100);
-      });
-      attachmentsContainer.appendChild(memoDiv);
-    }
-    
-    // Memo Photos rendering
-    if (todo.memoImages && todo.memoImages.length > 0) {
-      const memoPhotosDiv = document.createElement('div');
-      memoPhotosDiv.style.display = 'flex';
-      memoPhotosDiv.style.flexWrap = 'wrap';
-      memoPhotosDiv.style.gap = '8px';
-      memoPhotosDiv.style.marginTop = '6px';
-      
-      todo.memoImages.forEach((mediaObj, idx) => {
-        const thumb = document.createElement('div');
-        thumb.style.width = '60px';
-        thumb.style.height = '60px';
-        thumb.style.borderRadius = '8px';
-        thumb.style.overflow = 'hidden';
-        thumb.style.border = '1px solid var(--panel-border)';
-        thumb.style.cursor = 'pointer';
-        thumb.style.position = 'relative';
-        
-        const isVideo = mediaObj.type === 'video';
-        if (isVideo) {
-          thumb.style.backgroundColor = 'black';
-        }
-        
-        const mediaContainer = createMediaElementAsync(mediaObj, true, null, null);
-        mediaContainer.style.width = '100%';
-        mediaContainer.style.height = '100%';
-        mediaContainer.style.pointerEvents = 'none'; 
-        thumb.appendChild(mediaContainer);
-        
-        thumb.title = '클릭하여 미리보기 (수정은 더블클릭)';
-        thumb.addEventListener('click', (e) => {
-          e.stopPropagation();
-          openLightbox(todo.memoImages, idx, true);
-        });
-        thumb.addEventListener('dblclick', (e) => {
-          e.stopPropagation();
-          openTodoEditModal(todo.id);
-        });
-        memoPhotosDiv.appendChild(thumb);
-      });
-      attachmentsContainer.appendChild(memoPhotosDiv);
-    }
-
-    if (todo.memoVideos && todo.memoVideos.length > 0) {
-      const memoVideosDiv = document.createElement('div');
-      memoVideosDiv.style.display = 'flex';
-      memoVideosDiv.style.flexWrap = 'wrap';
-      memoVideosDiv.style.gap = '8px';
-      memoVideosDiv.style.marginTop = '6px';
-      
-      todo.memoVideos.forEach((vidObj, idx) => {
-        const thumb = document.createElement('div');
-        thumb.style.width = '60px';
-        thumb.style.height = '60px';
-        thumb.style.borderRadius = '8px';
-        thumb.style.overflow = 'hidden';
-        thumb.style.border = '1px solid var(--panel-border)';
-        thumb.style.cursor = 'pointer';
-        thumb.style.position = 'relative';
-        thumb.style.backgroundColor = 'black'; // background for videos
-        
-        const mediaContainer = createMediaElementAsync(vidObj, true, null, null);
-        mediaContainer.style.width = '100%';
-        mediaContainer.style.height = '100%';
-        mediaContainer.style.pointerEvents = 'none'; 
-        thumb.appendChild(mediaContainer);
-        
-        thumb.title = '클릭하여 미리보기 (수정은 더블클릭)';
-        thumb.addEventListener('click', (e) => {
-          e.stopPropagation();
-          openLightbox(todo.memoVideos, idx, true);
-        });
-        thumb.addEventListener('dblclick', (e) => {
-          e.stopPropagation();
-          openTodoEditModal(todo.id);
-        });
-        memoVideosDiv.appendChild(thumb);
-      });
-      attachmentsContainer.appendChild(memoVideosDiv);
-    }
-
-    // Memo Drawing rendering
-    if (hasDrawingData(todo.memoDrawing)) {
-      const viewDrawingContainer = document.createElement('div');
-      viewDrawingContainer.className = 'diary-drawing-container view-mode';
-      viewDrawingContainer.style.marginTop = '6px';
-      viewDrawingContainer.style.width = '100%';
-      viewDrawingContainer.style.height = '150px'; // Explicit height required
-      viewDrawingContainer.style.display = 'block'; 
-      attachmentsContainer.appendChild(viewDrawingContainer);
-
-      onExpandCallbacks.push(() => {
-        new NeonDrawingBoard(viewDrawingContainer, {
-          initialData: todo.memoDrawing,
-          readOnly: true
-        });
-      });
-      
-      viewDrawingContainer.style.cursor = 'pointer';
-      viewDrawingContainer.title = '클릭하여 곧바로 그림 수정하기';
-      const openDirectEdit = (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        openFullscreenDrawing(todo.memoDrawing, (data, isClosing) => {
-          const currentDayTodos = state.todos[dateKey] || [];
-          const currentTodo = currentDayTodos.find(t => t.id === todo.id);
-          if (currentTodo) {
-            currentTodo.memoDrawing = data ? JSON.parse(JSON.stringify(data)) : [];
-            saveTodos();
-            if (isClosing) renderTodos();
-          }
-        });
-      };
-      viewDrawingContainer.addEventListener('click', openDirectEdit);
-      viewDrawingContainer.addEventListener('contextmenu', openDirectEdit);
-    }
-
-    // Memo Audio rendering
-    if (todo.memoAudio && todo.memoAudio.length > 0) {
-      const audioViewContainer = document.createElement('div');
-      audioViewContainer.className = 'audio-previews-container';
-      audioViewContainer.style.marginTop = '6px';
-      audioViewContainer.style.width = '100%';
-      
-      attachmentsContainer.appendChild(audioViewContainer);
-      
-      onExpandCallbacks.push(() => {
-        setTimeout(() => {
-          renderAudioPreviews(audioViewContainer.id || (audioViewContainer.id = `view-audio-todo-${todo.id}`), todo.memoAudio, null);
-        }, 0);
-      });
-    }
-
-    if (hasAttachments) {
-      itemLeft.appendChild(attachmentsContainer);
-    }
-
-    // Action buttons container
-    const actionBtns = document.createElement('div');
-    actionBtns.classList.add('todo-action-btns');
-
-    // Star / Important Button
-    const starBtn = document.createElement('button');
-    starBtn.type = 'button';
-    starBtn.className = `todo-star-btn ${todo.isImportant ? 'active' : ''}`;
-    starBtn.innerHTML = todo.isImportant ? '⭐' : '☆';
-    starBtn.title = todo.isImportant ? '중요 표시 해제' : '중요 표시 (상단 고정)';
-    starBtn.ariaLabel = todo.isImportant ? '중요 표시 해제' : '중요 표시';
-    starBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleTodoImportant(todo.id, todo.dateKey || state.selectedDate);
-    });
-
-    // Edit button
-    const editBtn = document.createElement('button');
-    editBtn.type = 'button';
-    editBtn.classList.add('edit-btn');
-    editBtn.innerHTML = '✏️';
-    editBtn.ariaLabel = '할 일 수정';
-    editBtn.title = '수정';
-    editBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openTodoEditModal(todo.id);
-    });
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.classList.add('delete-btn');
-    deleteBtn.innerHTML = '✖';
-    deleteBtn.ariaLabel = '할 일 삭제';
-    deleteBtn.addEventListener('click', () => deleteTodo(todo.id, todo.text, todo.isRoutine));
-
-    actionBtns.appendChild(starBtn);
-    actionBtns.appendChild(editBtn);
-    actionBtns.appendChild(deleteBtn);
-
-    const itemMain = document.createElement('div');
-    itemMain.classList.add('todo-item-main');
-    itemMain.appendChild(itemLeft);
-    itemMain.appendChild(actionBtns);
-    item.appendChild(itemMain);
-
-    if (state.selectedTodoIdForDates === todo.id) {
-      const datesPanel = document.createElement('div');
-      datesPanel.classList.add('todo-dates-panel');
-
-      if (todo.createdAt) {
-        const createdInfo = document.createElement('div');
-        createdInfo.style.fontSize = '0.75rem';
-        createdInfo.style.color = 'var(--text-muted)';
-        createdInfo.style.marginBottom = '12px';
-        const cDate = new Date(todo.createdAt);
-        const yy = String(cDate.getFullYear()).slice(2);
-        const mm = String(cDate.getMonth() + 1).padStart(2, '0');
-        const dd = String(cDate.getDate()).padStart(2, '0');
-        createdInfo.innerHTML = `📅 등록일: ${yy}.${mm}.${dd}`;
-        datesPanel.appendChild(createdInfo);
-      }
-
-      const panelTitle = document.createElement('div');
-      panelTitle.classList.add('todo-dates-title');
-      panelTitle.textContent = '함께 계획된 날짜:';
-      datesPanel.appendChild(panelTitle);
-
-      const tagsContainer = document.createElement('div');
-      tagsContainer.classList.add('todo-dates-tags');
-
-      const otherDates = findOtherDatesForTodo(todo.text);
-      otherDates.forEach(dk => {
-        const tag = document.createElement('span');
-        tag.classList.add('todo-date-tag');
-        if (dk === state.selectedDate) tag.classList.add('current');
-        tag.textContent = formatDateKeyToMonthDay(dk);
-
-        const removeTagBtn = document.createElement('span');
-        removeTagBtn.className = 'remove-tag-btn';
-        removeTagBtn.innerHTML = '&times;';
-        removeTagBtn.title = '이 날짜에서 삭제';
-        removeTagBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          removeTodoFromDate(todo.text, dk);
-        });
-        tag.appendChild(removeTagBtn);
-        tagsContainer.appendChild(tag);
-      });
-
-      datesPanel.appendChild(tagsContainer);
-
-      const copyBtn = document.createElement('button');
-      copyBtn.type = 'button';
-      copyBtn.classList.add('todo-copy-btn');
-      if (state.copyingTodoId === todo.id) {
-        copyBtn.classList.add('copying');
-        copyBtn.innerHTML = '🎯 달력에서 복사할 날짜 선택 중... (완료하려면 클릭)';
-      } else {
-        copyBtn.innerHTML = '➕ 다른 날짜에 추가하기';
-      }
-      copyBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (state.copyingTodoId === todo.id) {
-          state.copyingTodoId = null;
-        } else {
-          state.copyingTodoId = todo.id;
-        }
-        updateUI();
-      });
-      datesPanel.appendChild(copyBtn);
-
-      item.appendChild(datesPanel);
-    }
-
-    todoItemsList.appendChild(item);
-  });
-
-  
-}
-
-// Run init on window load
-window.addEventListener('DOMContentLoaded', init);
-window.addEventListener('resize', () => {
-  applyLayoutSectionOrder();
-});
-
-// Setup floating tabs behavior
-function setupScrollFloatingTabs() {
-  const historyControls = document.getElementById('floating-history-controls');
-  if (!historyControls) return;
-  
-  window.addEventListener('scroll', () => {
-    if (state.showHistoryControls !== false && window.scrollY > 120) {
-      historyControls.classList.add('visible');
-    } else {
-      historyControls.classList.remove('visible');
-    }
-  }, { passive: true });
-}
-
-// Register Service Worker for PWA
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js')
-      .then(registration => {
-        console.log('ServiceWorker registration successful with scope: ', registration.scope);
-      })
-      .catch(error => {
-        console.error('ServiceWorker registration failed: ', error);
-      });
-  });
-}
-
-// Local Backup & Restore Logic (Base64 Data URI for PWA compatibility)
-function setupLocalBackup() {
-  const btnLocalBackup = document.getElementById('btn-local-backup');
-  const localRestoreInput = document.getElementById('local-restore-input');
-
-  if (btnLocalBackup) {
-    btnLocalBackup.addEventListener('click', () => {
-      try {
-        const backupData = {
-          todos: state.todos,
-          routines: state.routines,
-          routinesPopulatedDates: state.routinesPopulatedDates,
-          categories: state.categories,
-          diaries: state.diaries,
-          ddays: state.ddays,
-          appTitle: state.appTitle,
-          tabIcons: state.tabIcons
-        };
-        const jsonString = JSON.stringify(backupData);
-        
-        // Use Base64 Data URI to avoid "Access Blocked" on Android WebViews/PWAs
-        const base64Str = btoa(unescape(encodeURIComponent(jsonString)));
-        const encodedUri = "data:application/json;base64," + base64Str;
-        
-        const downloadLink = document.createElement("a");
-        downloadLink.href = encodedUri;
-        downloadLink.download = "neon_planner_backup.json";
-        
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        document.body.removeChild(downloadLink);
-      } catch (err) {
-        alert("백업 파일 생성 중 오류가 발생했습니다: " + err.message);
-      }
-    });
-  }
-
-  if (localRestoreInput) {
-    localRestoreInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = function(event) {
-        try {
-          const content = event.target.result;
-          const parsedData = JSON.parse(content);
-
-          if (!confirm('선택한 백업 파일로 모든 데이터를 복구하시겠습니까?\n현재 데이터는 모두 덮어씌워집니다.')) {
-            localRestoreInput.value = '';
-            return;
-          }
-
-          // Restore state
-          if (parsedData.todos) state.todos = parsedData.todos;
-          if (parsedData.routines) state.routines = parsedData.routines;
-          if (parsedData.routinesPopulatedDates) state.routinesPopulatedDates = parsedData.routinesPopulatedDates;
-          if (parsedData.categories) state.categories = parsedData.categories;
-          if (parsedData.diaries) state.diaries = parsedData.diaries;
-          if (parsedData.ddays) state.ddays = parsedData.ddays;
-          if (parsedData.appTitle) state.appTitle = parsedData.appTitle;
-          if (parsedData.tabIcons) state.tabIcons = parsedData.tabIcons;
-
-          // Save to LocalStorage
-          localStorage.setItem('neon_planner_todos', JSON.stringify(state.todos));
-          localStorage.setItem('neon_planner_routines', JSON.stringify(state.routines));
-          localStorage.setItem('neon_planner_populated_dates', JSON.stringify(state.routinesPopulatedDates));
-          localStorage.setItem('neon_planner_categories', JSON.stringify(state.categories));
-          localStorage.setItem('neon_planner_diaries', JSON.stringify(state.diaries));
-          localStorage.setItem('neon_planner_ddays', JSON.stringify(state.ddays));
-          if (state.appTitle) localStorage.setItem('neon_planner_app_title', state.appTitle);
-          if (state.tabIcons) localStorage.setItem('neon_planner_tab_icons', JSON.stringify(state.tabIcons));
-
-          alert('로컬 백업 복원이 완료되었습니다! 화면을 새로고침합니다.');
-          location.reload();
-        } catch (err) {
-          alert('백업 파일을 읽는 중 오류가 발생했습니다. 올바른 파일인지 확인해주세요.\n' + err.message);
-        }
-        localRestoreInput.value = ''; // reset
-      };
-      reader.readAsText(file);
-    });
-  }
-}
-
-document.addEventListener('DOMContentLoaded', setupLocalBackup);
-
-function setupHeaderGDriveSync() {
-  const hLogin = document.getElementById('btn-header-gdrive-login');
-  const hBackup = document.getElementById('btn-header-gdrive-backup');
-  const hRestore = document.getElementById('btn-header-gdrive-restore');
-  const hLogout = document.getElementById('btn-header-gdrive-logout');
-  
-  const mLogin = document.getElementById('btn-gdrive-login');
-  const mBackup = document.getElementById('btn-gdrive-backup');
-  const mRestore = document.getElementById('btn-gdrive-restore');
-  const mLogout = document.getElementById('btn-gdrive-logout');
-
-  if (hLogin && mLogin) hLogin.addEventListener('click', () => mLogin.click());
-  if (hBackup && mBackup) hBackup.addEventListener('click', () => mBackup.click());
-  if (hRestore && mRestore) hRestore.addEventListener('click', () => mRestore.click());
-  if (hLogout && mLogout) hLogout.addEventListener('click', () => mLogout.click());
-
-  setInterval(() => {
-    if (mBackup && hBackup) hBackup.disabled = mBackup.disabled;
-    if (mRestore && hRestore) hRestore.disabled = mRestore.disabled;
-    if (mLogout && hLogout) hLogout.style.display = mLogout.style.display;
-
-    if (hLogin && mLogout) {
-      if (mLogout.style.display !== 'none') {
-        // Connected
-        hLogin.style.borderColor = '#fbbf24'; // Yellow matching key icon
-        hLogin.style.borderWidth = '2px';
-      } else {
-        // Not connected
-        hLogin.style.borderColor = 'var(--panel-border)';
-        hLogin.style.borderWidth = '1px';
-      }
-    }
-  }, 300);
-}
-
-document.addEventListener('DOMContentLoaded', setupHeaderGDriveSync);
-
-window.addEventListener('online', () => {
-  if (localStorage.getItem('neon_planner_gdrive_connected') === 'true' && typeof autoSyncWithDrive === 'function') {
-    const badge = document.getElementById('gdrive-status-badge');
-    if (badge) {
-      badge.textContent = '🌐 인터넷 재연결됨...';
-    }
-    setTimeout(autoSyncWithDrive, 1000);
-  }
-});
-
-window.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    if (localStorage.getItem('neon_planner_gdrive_connected') === 'true' && typeof autoSyncWithDrive === 'function') {
-      autoSyncWithDrive();
-    }
-  }
-});
-
-window.addEventListener('focus', () => {
-  if (localStorage.getItem('neon_planner_gdrive_connected') === 'true' && typeof autoSyncWithDrive === 'function') {
-    autoSyncWithDrive();
-  }
-});
-
-function initVoiceAssistant() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  
-  if (!SpeechRecognition) {
-    console.warn("Speech Recognition API is not supported in this browser.");
-    const globalBtn = document.getElementById('btn-global-mic');
-    if (globalBtn) globalBtn.style.display = 'none';
-    const dictBtns = document.querySelectorAll('.dictation-btn');
-    dictBtns.forEach(b => b.style.display = 'none');
-    return;
-  }
-
-  const globalMic = document.getElementById('btn-global-mic');
-  const voiceOverlay = document.getElementById('voice-overlay');
-  const voiceStatusText = document.getElementById('voice-status-text');
-  const btnVoiceCancel = document.getElementById('btn-voice-cancel');
-  
-  const dictTodo = document.getElementById('btn-dictate-todo');
-  const dictRecord = document.getElementById('btn-dictate-record');
-  
-  let currentTargetInput = null; // Either a specific input element, or null for global commands
-  
-  const recognition = new SpeechRecognition();
-  recognition.lang = 'ko-KR';
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  // We will dynamically set continuous based on mode
-
-  const startListening = (targetInput) => {
-    currentTargetInput = targetInput;
-    recognition.continuous = !targetInput; // Continuous for global mic, single for dictation
-
-    try {
-      recognition.start();
-    } catch (e) {} // Ignore if already started
-    
-    if (targetInput) {
-      if (targetInput === document.getElementById('todo-input-field') && dictTodo) {
-        dictTodo.classList.add('listening');
-      } else if (targetInput === document.getElementById('new-record-text') && dictRecord) {
-        dictRecord.classList.add('listening');
-      }
-    } else {
-      if (voiceOverlay) voiceOverlay.classList.remove('hidden');
-      if (voiceStatusText) voiceStatusText.textContent = '듣고 있습니다...';
-    }
-  };
-
-  const stopListeningUI = () => {
-    if (dictTodo) dictTodo.classList.remove('listening');
-    if (dictRecord) dictRecord.classList.remove('listening');
-    if (voiceOverlay) voiceOverlay.classList.add('hidden');
-  };
-
-  recognition.onend = () => {
-    stopListeningUI();
-  };
-
-  recognition.onerror = (event) => {
-    console.error("Speech recognition error", event.error);
-    if (!currentTargetInput && voiceStatusText) {
-      voiceStatusText.textContent = '오류가 발생했습니다. 다시 시도해주세요.';
-      setTimeout(stopListeningUI, 1500);
-    } else {
-      stopListeningUI();
-    }
-  };
-
-  recognition.onresult = (event) => {
-    const current = event.resultIndex;
-    const transcript = event.results[current][0].transcript;
-    
-    if (currentTargetInput) {
-      // Dictation mode
-      currentTargetInput.value = (currentTargetInput.value + ' ' + transcript).trim();
-      stopListeningUI();
-    } else {
-      // Global Command Mode
-      if (voiceStatusText) voiceStatusText.textContent = `"${transcript}"`;
-      
-      handleVoiceCommand(transcript, recognition, stopListeningUI);
-    }
-  };
-
-  // Button Events
-  if (globalMic) {
-    globalMic.addEventListener('click', () => {
-      startListening(null);
-    });
-  }
-  
-  if (btnVoiceCancel) {
-    btnVoiceCancel.addEventListener('click', () => {
-      recognition.stop();
-      stopListeningUI();
-    });
-  }
-  
-  // Note: dictTodo and dictRecord handlers have been replaced by handleAudioDictateClick
-}
-
-function handleVoiceCommand(transcript, recognition, stopListeningUI) {
-  const t = transcript.toLowerCase().trim();
-  
-  if (t.includes('종료') || t.includes('그만') || t.includes('닫아') || t.includes('끝내')) {
-    if (recognition) recognition.stop();
-    if (stopListeningUI) stopListeningUI();
-    return;
-  }
-  
-  // Navigation commands (No return, so it can chain with '추가')
-  if (t.includes('할 일 탭') || t.includes('할일 탭') || t.includes('할일 열어') || t.includes('할 일 열어') || t.includes('투두')) {
-    const btn = document.getElementById('btn-toggle-todos');
-    if (btn && !btn.classList.contains('active-view')) btn.click();
-  } else if (t.includes('분석') || t.includes('통계')) {
-    const btn = document.getElementById('btn-toggle-analytics');
-    if (btn && !btn.classList.contains('active-view')) btn.click();
-  } else if (t.includes('달력') || t.includes('캘린더')) {
-    const btn = document.getElementById('btn-toggle-calendar');
-    if (btn && !btn.classList.contains('active-view')) btn.click();
-  } else if (t.includes('기록') || t.includes('일기')) {
-    const btn = document.getElementById('btn-toggle-records');
-    if (btn && !btn.classList.contains('active-view')) btn.click();
-  } else if (t.includes('루틴')) {
-    const btn = document.getElementById('btn-toggle-routines');
-    if (btn && !btn.classList.contains('active-view')) btn.click();
-  } else if (t.includes('설정')) {
-    const btn = document.getElementById('btn-toggle-control-panel');
-    if (btn && !btn.classList.contains('active-view')) btn.click();
-  }
-  
-  // Adding Command (Todo, Routine, Record, D-day)
-  if (t.includes('추가') || t.includes('넣어') || t.includes('저장')) {
-    const textToParse = t.replace(/할\s*일에?/gi, '')
-                         .replace(/일정에?/gi, '')
-                         .replace(/루틴\s*관리에?/gi, '')
-                         .replace(/루팅\s*관리에?/gi, '')
-                         .replace(/루틴\s*관리의?/gi, '')
-                         .replace(/루팅\s*관리의?/gi, '')
-                         .replace(/루틴\s*관리해서?/gi, '')
-                         .replace(/루팅\s*관리해서?/gi, '')
-                         .replace(/루틴[의에]?/gi, '')
-                         .replace(/루팅[의에]?/gi, '')
-                         .replace(/기록에?/gi, '')
-                         .replace(/일기에?/gi, '')
-                         .replace(/디데이에?/gi, '')
-                         .replace(/기념일에?/gi, '')
-                         .replace(/추가해\s*주세요/gi, '')
-                         .replace(/저장해\s*주세요/gi, '')
-                         .replace(/넣어\s*주세요/gi, '')
-                         .replace(/추가해?/gi, '')
-                         .replace(/저장해?/gi, '')
-                         .replace(/저장/gi, '')
-                         .replace(/넣어줘?/gi, '')
-                         .replace(/주세요/gi, '')
-                         .replace(/부탁해/gi, '')
-                         .replace(/할\s*일\s*탭\s*열고/gi, '')
-                         .replace(/할\s*일\s*탭\s*열어주고/gi, '')
-                         .trim();
-                         
-    if (textToParse) {
-      const parsed = parseNaturalLanguageTodo(textToParse);
-      
-      const isRoutine = t.includes('루틴') || t.includes('루팅');
-      const isRecord = t.includes('기록') || t.includes('일기');
-      const isDday = t.includes('디데이') || t.includes('기념일');
-
-      pushToHistory();
-
-      if (isRoutine) {
-        state.routines.push({
-          id: Date.now(),
-          text: parsed.cleanedText,
-          category: 'other',
-          startDate: parsed.dateKey,
-          endDate: ''
-        });
-        saveRoutines();
-        // Immediately populate so it shows up in today's to-do list like normal routines
-        if (typeof populateRoutinesForDate === 'function') {
-          populateRoutinesForDate(state.selectedDate, true);
-        }
-        if (typeof initRoutinesPanel === 'function') initRoutinesPanel();
-        updateUI();
-      } else if (isRecord) {
-        if (!state.diaries[parsed.dateKey]) {
-          state.diaries[parsed.dateKey] = [];
-        }
-        state.diaries[parsed.dateKey].push({
-          id: Date.now(),
-          text: parsed.cleanedText,
-          images: [],
-          timestamp: parsed.time || Date.now()
-        });
-        saveDiaries();
-        if (typeof renderRecordCards === 'function') renderRecordCards();
-      } else if (isDday) {
-        state.ddays.push({
-          id: Date.now(),
-          title: parsed.cleanedText,
-          targetDate: parsed.dateKey
-        });
-        saveDdayData();
-        if (typeof renderDdays === 'function') renderDdays();
-      } else {
-        // Default to Todo
-        if (!state.todos[parsed.dateKey]) {
-          state.todos[parsed.dateKey] = [];
-        }
-        state.todos[parsed.dateKey].push({
-          id: Date.now(),
-          text: parsed.cleanedText,
-          category: 'other',
-          completed: false,
-          time: parsed.time || ''
-        });
-        saveTodos();
-        updateUI();
-      }
-      
-      // Visual feedback without blocking alert
-      const statusText = document.getElementById('voice-status-text');
-      let targetName = isRoutine ? '루틴' : (isRecord ? '기록' : (isDday ? '디데이' : '할 일'));
-      if (statusText) {
-        statusText.textContent = `✅ [${targetName}] 추가됨: ${parsed.cleanedText}`;
-      }
-      
-      // Auto-close voice assistant after a successful save
-      setTimeout(() => {
-        if (recognition) recognition.stop();
-        if (stopListeningUI) stopListeningUI();
-      }, 1500);
-    }
-  }
-}
-
-document.addEventListener('DOMContentLoaded', initVoiceAssistant);
-
-
-
-// Helper to render media async (Image, Video, PDF)
-function createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove) {
-  const container = document.createElement('div');
-  container.className = isEditMode ? 'thumb-img-wrapper' : 'media-view-wrapper';
-  container.style.position = 'relative';
-  container.style.display = 'flex';
-  container.style.alignItems = 'center';
-  container.style.justifyContent = 'center';
-  container.style.overflow = 'hidden';
-  if (!isEditMode) container.style.height = '100%';
-
-  let delBtn = null;
-  if (isEditMode && onRemove) {
-    delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'delete-thumb-btn';
-    delBtn.innerHTML = '&times;';
-    delBtn.style.position = 'absolute';
-    delBtn.style.top = '4px';
-    delBtn.style.right = '4px';
-    delBtn.style.zIndex = '20';
-    delBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      onRemove();
-    });
-  }
-
-  if (typeof mediaObj === 'string') {
-    mediaObj = { src: mediaObj, type: 'image' };
-  }
-
-  const isDataVideo = typeof mediaObj.src === 'string' && mediaObj.src.startsWith('data:video/');
-  
-  if (!isDataVideo && (!mediaObj.type || mediaObj.type === 'image' || (mediaObj.src && mediaObj.type !== 'video'))) {
-    const img = document.createElement('img');
-    img.src = mediaObj.src || mediaObj.poster;
-    if (mediaObj.rotate !== undefined) img.style = getImageStyle(mediaObj);
-    if (!isEditMode) {
-      img.style.cursor = 'pointer';
-      img.style.width = '100%';
-      img.style.height = '100%';
-      img.style.objectFit = 'cover';
-    } else {
-      img.style.width = '100%';
-      img.style.height = '100%';
-      img.style.objectFit = 'cover';
-    }
-    img.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (onClick) onClick();
-    });
-    container.appendChild(img);
-  } else if (mediaObj.type === 'video' || mediaObj.type === 'pdf') {
-    
-    // ===== VIDEO THUMBNAIL: use poster frame if available (fast, no FileDB needed) =====
-    if (mediaObj.type === 'video' && mediaObj.poster && isEditMode) {
-      // Show poster image as thumbnail immediately
-      const img = document.createElement('img');
-      img.src = mediaObj.poster;
-      img.style.width = '100%';
-      img.style.height = '100%';
-      img.style.objectFit = 'cover';
-      img.style.pointerEvents = 'none';
-      container.appendChild(img);
-
-      // Play icon overlay
-      const playBadge = document.createElement('div');
-      playBadge.innerHTML = '▶';
-      playBadge.style.cssText = 'position:absolute; bottom:4px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); color:white; font-size:14px; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; pointer-events:none;';
-      container.appendChild(playBadge);
-      
-      if (onClick) {
-        container.style.cursor = 'pointer';
-        container.addEventListener('click', (e) => {
-          e.stopPropagation();
-          onClick();
-        });
-      }
-      if (delBtn) container.appendChild(delBtn);
-      return container; // Done — no async load needed for thumbnails
-    }
-
-    // ===== VIDEO WITHOUT POSTER / PDF: async load from FileDB =====
-    const loading = document.createElement('div');
-    if (mediaObj.type === 'video') {
-      // Show video icon placeholder while loading
-      loading.innerHTML = '🎬';
-      loading.style.cssText = 'font-size:28px; opacity:0.7;';
-    } else {
-      loading.innerHTML = '📄';
-      loading.style.cssText = 'font-size:24px; opacity:0.7; color:#fff;';
-    }
-    container.appendChild(loading);
-
-    FileDB.getFile(mediaObj.fileId).then(fileRecord => {
-      if (container.contains(loading)) container.removeChild(loading);
-      if (!fileRecord || !fileRecord.blob) {
-        const err = document.createElement('div');
-        err.innerHTML = '⚠️<br><span style="font-size:12px; margin-top:4px; display:inline-block; border-bottom:1px solid currentColor;">연동 안됨</span>';
-        err.style.cssText = 'font-size:18px; opacity:0.8; cursor:pointer; text-align:center; color:#fff; display:flex; flex-direction:column; align-items:center;';
-        err.title = "다운로드 재시도";
-        err.onclick = (e) => {
-          e.stopPropagation();
-          if (container.parentElement) {
-            const newContainer = createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove);
-            container.parentElement.replaceChild(newContainer, container);
-          }
-        };
-        container.appendChild(err);
-
-        if (onRemove && isEditMode) {
-          const delBtn = document.createElement('button');
-          delBtn.type = 'button';
-          delBtn.innerHTML = '❌';
-          delBtn.className = 'delete-thumb-btn';
-          delBtn.title = '이 파일 지우기';
-          delBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            onRemove();
-          });
-          container.appendChild(delBtn);
-        }
-        return;
-      }
-      
-      const fileType = fileRecord.type || (mediaObj.type === 'video' ? 'video/mp4' : 'application/pdf');
-      const typedBlob = new Blob([fileRecord.blob], { type: fileType });
-      const blobUrl = URL.createObjectURL(typedBlob);
-      if (mediaObj.type === 'video') {
-        if (isEditMode) {
-          // In thumbnail/edit mode: capture first frame from blob and show as image
-          const tempVid = document.createElement('video');
-          tempVid.src = blobUrl;
-          tempVid.muted = true;
-          tempVid.playsInline = true;
-          tempVid.style.display = 'none';
-          tempVid.addEventListener('loadeddata', () => {
-            tempVid.currentTime = Math.min(0.5, tempVid.duration || 0);
-          });
-          tempVid.addEventListener('seeked', () => {
-            try {
-              const cvs = document.createElement('canvas');
-              cvs.width = tempVid.videoWidth || 120;
-              cvs.height = tempVid.videoHeight || 80;
-              cvs.getContext('2d').drawImage(tempVid, 0, 0, cvs.width, cvs.height);
-              const posterUrl = cvs.toDataURL('image/jpeg', 0.7);
-
-              const img = document.createElement('img');
-              img.src = posterUrl;
-              img.style.width = '100%';
-              img.style.height = '100%';
-              img.style.objectFit = 'cover';
-              img.style.pointerEvents = 'none';
-              container.appendChild(img);
-
-              const playBadge = document.createElement('div');
-              playBadge.innerHTML = '▶';
-              playBadge.style.cssText = 'position:absolute; bottom:4px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); color:white; font-size:14px; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; pointer-events:none;';
-              container.appendChild(playBadge);
-            } catch(e) {
-              // fallback: show video element
-              const vid = document.createElement('video');
-              vid.src = blobUrl;
-              vid.controls = false;
-              vid.style.width = '100%';
-              vid.style.height = '100%';
-              vid.style.objectFit = 'cover';
-              container.appendChild(vid);
-            }
-          });
-          tempVid.addEventListener('error', () => {
-            const vid = document.createElement('video');
-            vid.src = blobUrl;
-            vid.controls = false;
-            vid.style.width = '100%';
-            vid.style.height = '100%';
-            vid.style.objectFit = 'cover';
-            container.appendChild(vid);
-          });
-          document.body.appendChild(tempVid); // needs to be in DOM to seek
-          setTimeout(() => { try { document.body.removeChild(tempVid); } catch(e) {} }, 5000);
-        } else {
-          // Full view mode: show actual video player
-          const vid = document.createElement('video');
-          vid.src = blobUrl;
-          vid.controls = true;
-          vid.style.width = '100%';
-          vid.style.height = '100%';
-          vid.style.objectFit = 'cover';
-          container.appendChild(vid);
-        }
-      } else if (mediaObj.type === 'pdf') {
-        const pdfBtn = document.createElement('button');
-        pdfBtn.type = 'button';
-        pdfBtn.innerHTML = '📄 PDF 보기';
-        pdfBtn.style.cssText = 'padding:8px 12px; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; width:100%; height:100%;';
-        pdfBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          window.open(blobUrl, '_blank');
-        });
-        container.appendChild(pdfBtn);
-      }
-    }).catch(e => {
-       console.error('Failed to load file:', e);
-       if (container.contains(loading)) container.removeChild(loading);
-       const err = document.createElement('div');
-       err.innerHTML = '❌<br><span style="font-size:12px; margin-top:4px; display:inline-block; border-bottom:1px solid currentColor;">재시도</span>';
-       err.style.cssText = 'font-size:22px; opacity:0.8; cursor:pointer; text-align:center; color:#fff; display:flex; flex-direction:column; align-items:center;';
-       err.title = "다시 다운로드 시도하기";
-       err.onclick = (e) => {
-         e.stopPropagation();
-         if (container.parentElement) {
-           const newContainer = createMediaElementAsync(mediaObj, isEditMode, onClick, onRemove);
-           container.parentElement.replaceChild(newContainer, container);
-         }
-       };
-       container.appendChild(err);
-    });
-  }
-  
-  if (delBtn) {
-    container.appendChild(delBtn);
-  }
-  
-  return container;
-}
-
-// ====== FILE DB (IndexedDB) ======
-const GDriveMediaSync = {
-  _pendingDownloads: {},
-  async uploadMedia(id, blob, type, name, isRetry = false) {
-    if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return;
-    try {
-      const metadata = { name: 'neon_media_' + id, parents: ['appDataFolder'], appProperties: { fileId: id, type: type || '', name: name || '' } };
-      
-      // Step 1: Initiate Resumable Upload
-      const initRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + gdriveAccessToken,
-          'Content-Type': 'application/json; charset=UTF-8',
-          'X-Upload-Content-Type': blob.type || 'application/octet-stream',
-          'X-Upload-Content-Length': blob.size
-        },
-        body: JSON.stringify(metadata)
-      });
-      
-      if (!initRes.ok) {
-        console.error('Resumable init failed');
-        if (initRes.status === 401 && !isRetry) {
-          if (typeof autoRefreshGDriveToken === 'function') {
-            await autoRefreshGDriveToken();
-            return this.uploadMedia(id, blob, type, name, true);
-          }
-        }
-        return;
-      }
-      
-      const location = initRes.headers.get('Location');
-      if (!location) {
-        console.error('No upload location returned');
-        return;
-      }
-      
-      // Step 2: Upload the actual binary data
-      await fetch(location, {
-        method: 'PUT',
-        headers: {},
-        body: blob
-      });
-    } catch (e) { console.error('Upload failed:', e); }
-  },
-  async downloadMedia(id, isRetry = false) {
-    if (typeof gdriveAccessToken === 'undefined' || !gdriveAccessToken) return null;
-    
-    // 이미 같은 파일의 다운로드가 진행 중이면 해당 Promise를 반환하여 중복 요청 방지
-    if (this._pendingDownloads[id]) {
-      return this._pendingDownloads[id];
-    }
-
-    const downloadPromise = (async () => {
-      try {
-        const searchRes = await fetch("https://www.googleapis.com/drive/v3/files?q=name='neon_media_" + id + "'+and+trashed=false&spaces=appDataFolder&fields=files(id,appProperties)", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
-        
-        if (searchRes.status === 401) {
-          if (!isRetry && typeof autoRefreshGDriveToken === 'function') {
-            await autoRefreshGDriveToken();
-            return this.downloadMedia(id, true);
-          }
-          return null;
-        }
-        if (!searchRes.ok) return null;
-        
-        const searchData = await searchRes.json();
-        const file = searchData.files && searchData.files[0];
-        if (!file) return null;
-        
-        const contentRes = await fetch("https://www.googleapis.com/drive/v3/files/" + file.id + "?alt=media", { headers: { 'Authorization': 'Bearer ' + gdriveAccessToken }});
-        
-        if (contentRes.status === 401) {
-          if (!isRetry && typeof autoRefreshGDriveToken === 'function') {
-            await autoRefreshGDriveToken();
-            return this.downloadMedia(id, true);
-          }
-          return null;
-        }
-        if (!contentRes.ok) return null;
-        
-        const blob = await contentRes.blob();
-        return { id, blob, type: file.appProperties?.type || 'unknown', name: file.appProperties?.name || '', timestamp: Date.now() };
-      } catch (e) { 
-        console.error("Download media failed:", e);
-        return null; 
-      } finally {
-        delete this._pendingDownloads[id];
-      }
-    })();
-
-    this._pendingDownloads[id] = downloadPromise;
-    return downloadPromise;
-  }
-};
-const FileDB = {
-  db: null,
-  init() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open("PlaneerFileDB", 1);
-      request.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains("files")) db.createObjectStore("files", { keyPath: "id" });
-      };
-      request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
-      request.onerror = (e) => { reject(e); };
-    });
-  },
-  async saveFile(blob, type, name) {
-    if (!this.db) await this.init();
-    const id = 'file_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-    await new Promise((resolve, reject) => {
-      const tx = this.db.transaction("files", "readwrite");
-      tx.objectStore("files").put({ id, blob, type, name, timestamp: Date.now() });
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e);
-    });
-    if (typeof gdriveAccessToken !== 'undefined' && gdriveAccessToken) {
-      const overlay = document.getElementById('global-upload-overlay');
-      const isVideo = type && type.startsWith('video/');
-      if (isVideo && overlay) overlay.style.display = 'flex';
-      try {
-        await GDriveMediaSync.uploadMedia(id, blob, type, name);
-      } finally {
-        if (isVideo && overlay) overlay.style.display = 'none';
-      }
-    }
-    return id;
-  },
-  async getFile(id) {
-    if (!this.db) await this.init();
-    let record = await new Promise((resolve, reject) => {
-      const tx = this.db.transaction("files", "readonly");
-      const request = tx.objectStore("files").get(id);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = (e) => reject(e);
-    });
-    if (!record && typeof gdriveAccessToken !== 'undefined' && gdriveAccessToken) {
-       record = await GDriveMediaSync.downloadMedia(id);
-       if (record) {
-         try { const tx = this.db.transaction("files", "readwrite"); tx.objectStore("files").put(record); } catch(e) {}
-       }
-    }
-    return record;
-  },
-  async deleteFile(id) {
-    if (!this.db) await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction("files", "readwrite");
-      tx.objectStore("files").delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e);
-    });
-  }
-};
-FileDB.init();
-
-// ====== AUDIO RECORDING & STT ======
-const AudioRecorder = {
-  mediaRecorder: null,
-  audioChunks: [],
-  speechRecognition: null,
-  isRecording: false,
-  finalTranscript: '',
-  lastInterim: '',
-  onStop: null,
-  onProgress: null,
-  
-  init() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      this.speechRecognition = new SpeechRecognition();
-      this.speechRecognition.lang = 'ko-KR';
-      this.speechRecognition.continuous = true;
-      this.speechRecognition.interimResults = true;
-      
-      this.speechRecognition.onresult = (event) => {
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            this.finalTranscript += event.results[i][0].transcript + ' ';
-          } else {
-            interim += event.results[i][0].transcript;
-          }
-        }
-        this.lastInterim = interim;
-        if (this.onProgress) {
-          this.onProgress(this.finalTranscript + interim);
-        }
-      };
-      
-      this.speechRecognition.onerror = (e) => console.error("AudioRecorder STT error:", e.error);
-    }
-  },
-
-  async start(onStopCallback, onProgressCallback) {
-    if (this.isRecording) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-          channelCount: 2
-        } 
-      });
-      
-      let options = { audioBitsPerSecond: 128000 };
-      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-        options.mimeType = 'audio/webm;codecs=opus';
-      } else if (MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a.40.2')) {
-        options.mimeType = 'audio/mp4;codecs=mp4a.40.2';
-      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-        options.mimeType = 'audio/mp4';
-      } else {
-        options = undefined;
-      }
-      
-      this.mediaRecorder = new MediaRecorder(stream, options);
-      this.audioChunks = [];
-      this.finalTranscript = '';
-      this.lastInterim = '';
-      this.onStop = onStopCallback;
-      this.onProgress = onProgressCallback;
-
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          this.audioChunks.push(event.data);
-        }
-      };
-
-      this.mediaRecorder.onstop = () => {
-        const mimeType = this.mediaRecorder.mimeType || 'audio/webm';
-        const audioBlob = new Blob(this.audioChunks, { type: mimeType });
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = () => {
-          const base64Audio = reader.result;
-          if (this.onStop) {
-            this.onStop(base64Audio, this.finalTranscript.trim());
-          }
-        };
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      this.mediaRecorder.start();
-      this.isRecording = true;
-      
-      if (this.speechRecognition) {
-        try { this.speechRecognition.start(); } catch(e) {}
-      }
-    } catch (err) {
-      console.error("Microphone access denied or error:", err);
-      alert("마이크 접근 권한이 필요합니다.");
-    }
-  },
-
-  stop() {
-    if (!this.isRecording) return;
-    this.isRecording = false;
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      this.mediaRecorder.stop();
-    }
-    if (this.speechRecognition) {
-      try { this.speechRecognition.stop(); } catch(e) {}
-    }
-  }
-};
-AudioRecorder.init();
-
-function renderAudioPreviews(containerId, draftArray, onChangeCallback) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  container.innerHTML = '';
-  draftArray.forEach((audioData, idx) => {
-    const wrapper = document.createElement('div');
-    wrapper.style.display = 'flex';
-    wrapper.style.flexDirection = 'column';
-    wrapper.style.gap = '8px';
-    wrapper.style.background = 'rgba(255,255,255,0.05)';
-    wrapper.style.padding = '12px';
-    wrapper.style.borderRadius = '8px';
-    wrapper.style.border = '1px solid rgba(255,255,255,0.1)';
-    wrapper.style.marginBottom = '8px';
-
-    const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.gap = '8px';
-
-    const audioEl = document.createElement('audio');
-    audioEl.controls = true;
-    audioEl.src = audioData.src || audioData;
-    audioEl.style.height = '36px';
-    audioEl.style.flex = '1';
-    
-    row.appendChild(audioEl);
-
-    if (onChangeCallback) {
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.innerHTML = '❌';
-      delBtn.title = '녹음 파일 삭제';
-      delBtn.style.background = 'none';
-      delBtn.style.border = 'none';
-      delBtn.style.cursor = 'pointer';
-      delBtn.style.fontSize = '1.2rem';
-      delBtn.addEventListener('click', () => {
-        draftArray.splice(idx, 1);
-        onChangeCallback();
-      });
-      row.appendChild(delBtn);
-    }
-    wrapper.appendChild(row);
-
-    // Transcription Text Block
-    const textRow = document.createElement('div');
-    textRow.style.display = 'none'; // Initially hidden
-    textRow.style.alignItems = 'flex-start';
-    textRow.style.gap = '8px';
-    textRow.style.marginTop = '8px';
-    
-    const sttIcon = document.createElement('span');
-    sttIcon.innerHTML = '📝';
-    sttIcon.style.fontSize = '1.1rem';
-    sttIcon.style.marginTop = '4px';
-    textRow.appendChild(sttIcon);
-
-    const textEl = document.createElement('textarea');
-    textEl.style.flex = '1';
-    textEl.style.fontSize = '0.9rem';
-    textEl.style.color = '#fff';
-    textEl.style.padding = '8px';
-    textEl.style.background = 'rgba(0,0,0,0.3)';
-    textEl.style.border = '1px solid #444';
-    textEl.style.borderRadius = '4px';
-    textEl.style.resize = 'vertical';
-    textEl.style.minHeight = '60px';
-    textEl.placeholder = "음성 인식된 텍스트가 없거나 수정이 필요하면 직접 입력하세요.";
-    textEl.value = audioData.transcription || '';
-    
-    if (!onChangeCallback) {
-      textEl.readOnly = true;
-    } else {
-      textEl.addEventListener('change', (e) => {
-        audioData.transcription = e.target.value;
-        if (onChangeCallback) onChangeCallback(); // trigger save
-      });
-    }
-    textRow.appendChild(textEl);
-
-    if (onChangeCallback) {
-      const delTextBtn = document.createElement('button');
-      delTextBtn.type = 'button';
-      delTextBtn.innerHTML = '🗑️';
-      delTextBtn.title = '텍스트 지우기';
-      delTextBtn.style.background = 'none';
-      delTextBtn.style.border = 'none';
-      delTextBtn.style.cursor = 'pointer';
-      delTextBtn.style.fontSize = '1.1rem';
-      delTextBtn.style.padding = '4px';
-      delTextBtn.addEventListener('click', () => {
-        textEl.value = '';
-        audioData.transcription = '';
-        onChangeCallback(); // trigger save
-      });
-      textRow.appendChild(delTextBtn);
-    }
-
-    wrapper.appendChild(textRow);
-
-    // Toggle Button for STT Text
-    const toggleTextBtn = document.createElement('button');
-    toggleTextBtn.type = 'button';
-    toggleTextBtn.innerHTML = audioData.transcription ? '📖 변환된 텍스트 보기 (수정 가능)' : '✏️ 텍스트 직접 입력 (자동변환 없음)';
-    toggleTextBtn.style.marginTop = '6px';
-    toggleTextBtn.style.padding = '6px 10px';
-    toggleTextBtn.style.background = 'rgba(255,255,255,0.1)';
-    toggleTextBtn.style.border = '1px solid #555';
-    toggleTextBtn.style.borderRadius = '4px';
-    toggleTextBtn.style.color = '#ddd';
-    toggleTextBtn.style.fontSize = '0.85rem';
-    toggleTextBtn.style.cursor = 'pointer';
-    toggleTextBtn.style.alignSelf = 'flex-start';
-
-    toggleTextBtn.addEventListener('click', () => {
-      if (textRow.style.display === 'none') {
-        textRow.style.display = 'flex';
-        toggleTextBtn.innerHTML = '⬆️ 텍스트 숨기기';
-      } else {
-        textRow.style.display = 'none';
-        toggleTextBtn.innerHTML = textEl.value.trim() ? '📖 변환된 텍스트 보기 (수정 가능)' : '✏️ 텍스트 직접 입력 (자동변환 없음)';
-      }
-    });
-    
-    // Insert toggle button right after the audio row
-    wrapper.insertBefore(toggleTextBtn, textRow);
-
-    container.appendChild(wrapper);
-  });
-}
-
-function handleAudioDictateClick(btnId, inputId, getDraftsArray, containerId, onChange) {
-  const btn = document.getElementById(btnId);
-  const textField = document.getElementById(inputId);
-  if (!btn) return;
-  
-  btn.addEventListener('click', () => {
-    if (AudioRecorder.isRecording) {
-      AudioRecorder.stop();
-      btn.classList.remove('listening');
-      btn.style.animation = 'none';
-      btn.innerHTML = '🎙️';
-    } else {
-      btn.classList.add('listening');
-      btn.style.animation = 'pulse 1.5s infinite';
-      btn.innerHTML = '⏹️';
-      AudioRecorder.start(
-        (base64Audio, transcript) => {
-          if (base64Audio) {
-            getDraftsArray().push({ src: base64Audio, transcription: transcript });
-            if (onChange) onChange();
-          }
-        },
-        (interimTranscript) => {
-          // Do not append to main text field anymore, we show it in the audio preview block
-          // But to show it's listening, we could update the button text temporarily
-          if (interimTranscript.trim() !== '') {
-            btn.innerHTML = '듣는 중...';
-          }
-        }
-      );
-      if (textField) AudioRecorder.initialText = textField.value;
-    }
-  });
-}
-
-// Setup dictate buttons for New Record and Todo Modal
-handleAudioDictateClick(
-  'btn-dictate-record', 
-  'new-record-text', 
-  () => state.diaryDraftAudio, 
-  'new-record-audio-previews', 
-  () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, () => renderAudioPreviews('new-record-audio-previews', state.diaryDraftAudio, null)) // Will hook to renderDiary later
-);
-
-handleAudioDictateClick(
-  'btn-dictate-todo-modal', 
-  'todo-edit-modal-memo', 
-  todoEditDraftAudio, 
-  'todo-edit-modal-audio-previews', 
-  () => renderAudioPreviews('todo-edit-modal-audio-previews', todoEditDraftAudio, () => renderAudioPreviews('todo-edit-modal-audio-previews', todoEditDraftAudio, null))
-);
-
-// Fullscreen Drawing Modal Global Functions
-window.currentDrawingBoard = null;
-window.openFullscreenDrawing = function(initialData, onSaveCallback) {
-  const modal = document.getElementById('drawing-fullscreen-modal');
-  const container = document.getElementById('drawing-fullscreen-container');
-  if (!modal || !container) return;
-  
-  modal.classList.remove('hidden');
-  modal.style.display = 'flex';
-  document.body.style.overflow = 'hidden'; // prevent bg scroll
-  
-  container.innerHTML = '';
-
-  // 스로틀링: 스트로크마다 데이터만 저장 (UI 갱신은 최소화)
-  let autoSaveTimer = null;
-  const throttledSave = (data) => {
-    clearTimeout(autoSaveTimer);
-    autoSaveTimer = setTimeout(() => {
-      if (onSaveCallback) onSaveCallback(data, false);
-    }, 300);
-  };
-
-  window.currentDrawingBoard = new NeonDrawingBoard(container, {
-    initialData: initialData || [],
-    onChange: (data) => {
-      // 그림을 그릴 때마다 실시간 자동 저장 (UI 리렌더링 제외)
-      throttledSave(data);
-    },
-    onClose: (data) => {
-      // 닫기 버튼 클릭 시: 진행 중인 자동저장 취소 후 즉시 저장 및 UI 갱신
-      clearTimeout(autoSaveTimer);
-      if (onSaveCallback) onSaveCallback(data, true);
-      window.closeFullscreenDrawing();
-    }
-  });
-};
-
-window.closeFullscreenDrawing = function() {
-  const modal = document.getElementById('drawing-fullscreen-modal');
-  if (modal) {
-    modal.classList.add('hidden');
-    modal.style.display = 'none';
-  }
-  document.body.style.overflow = '';
-  window.currentDrawingBoard = null;
-};
-

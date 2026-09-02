@@ -6121,7 +6121,6 @@ function renderTimeline() {
           btnRow.appendChild(cancelBtn);
 
           diaryCard.appendChild(btnRow);
-        } else {
           let isExpanded = false;
 
           const headerRow = document.createElement('div');
@@ -6243,7 +6242,6 @@ function renderTimeline() {
             toggleIcon.innerHTML = isExpanded ? '▲' : '▼';
             detailsContainer.style.display = isExpanded ? 'block' : 'none';
           });
-        }
 
         diaryContent.appendChild(diaryCard);
       });
